@@ -1,4 +1,4 @@
 """QURI SDK prompts"""
 
-quri_sdk_tutorial_prompt = """
+quri_sdk_docs_toc_prompt = """
 """

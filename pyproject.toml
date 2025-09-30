@@ -8,3 +8,10 @@ dependencies = [
     "markdownify>=1.2.0",
     "mcp[cli]>=1.14.1",
 ]
+
+[dependency-groups]
+dev = [
+    "black>=25.9.0",
+    "flake8>=7.3.0",
+    "mypy>=1.18.2",
+]
