@@ -1,4 +1,3 @@
-# from functools import
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.resources import HttpResource
 from prompts import quri_sdk_docs_toc_prompt
@@ -33,7 +32,8 @@ def get_mcp_server() -> FastMCP:
 
         return quri_sdk_docs_toc_prompt
 
-    map(mcp.add_resource, all_http_resources)
+    for r in all_http_resources:
+        mcp.add_resource(r)
 
     # Utils ----------------------
     @mcp.tool()
