@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.resources import HttpResource
+from fetch_tools import all_fetch_tools
 from prompts import quri_sdk_docs_toc_prompt
 from http_resources import all_http_resources
 from fetch import Fetcher, FetchRequestArgs, FetchResponse
@@ -21,16 +22,10 @@ def get_mcp_server() -> FastMCP:
     """,
     )
 
-    @mcp.resource("qsdk://docs/toc")
-    def quri_sdk_docs_toc() -> str:
-        """
-        Provide TOC for quri-sdk documentation
-
-        Returns:
-            str: The TOC and usage guide
-        """
-
-        return quri_sdk_docs_toc_prompt
+    # for uri, t in all_fetch_tools.items():
+    #     mcp.resource(uri)(t)
+    for t in all_fetch_tools:
+        mcp.add_tool(t)
 
     for r in all_http_resources:
         mcp.add_resource(r)
