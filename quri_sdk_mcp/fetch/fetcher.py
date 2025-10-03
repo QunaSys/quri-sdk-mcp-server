@@ -1,16 +1,14 @@
 import httpx
 from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
-from typing import Dict, Optional, Any
 import json
 
 from .types import FetchRequestArgs, FetchResponse
 
 
 class NoImagesConverter(MarkdownConverter):
-    """
-    Create a custom MarkdownConverter that ignores all images during conversion
-    """
+    """Create a custom MarkdownConverter that ignores all images during
+    conversion."""
 
     def convert_img(self, el, text, parent_tags):
         # Return empty string instead of converting the image
