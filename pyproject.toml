@@ -17,3 +17,12 @@ dev = [
     "flake8>=7.3.0",
     "mypy>=1.18.2",
 ]
+
+[tool.docformatter]
+black = true
+blank = false
+close-quotes-on-newline = true
+
+[tool.ruff.format]
+docstring-code-format = true
+docstring-code-line-length = 88

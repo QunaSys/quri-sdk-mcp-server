@@ -7,8 +7,7 @@ from .types import FetchRequestArgs, FetchResponse
 
 
 class NoImagesConverter(MarkdownConverter):
-    """Create a custom MarkdownConverter that ignores all images during
-    conversion."""
+    """Create a custom MarkdownConverter that ignores all images during conversion."""
 
     def convert_img(self, el, text, parent_tags):
         # Return empty string instead of converting the image

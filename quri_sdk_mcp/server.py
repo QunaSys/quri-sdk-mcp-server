@@ -5,7 +5,8 @@ from markdown_resources import all_markdown_resources
 from python_source_code_resources import all_python_source_code_resources
 from text_resources import all_text_resources
 from fetch import Fetcher, FetchRequestArgs, FetchResponse
-from typing import Optional
+from py_checker import run_code_in_temporary_venv
+from typing import Optional, Any
 
 
 def get_mcp_server() -> FastMCP:
@@ -45,11 +46,11 @@ def get_mcp_server() -> FastMCP:
     async def fetch_as_markdown(
         url: str, headers: Optional[dict[str, str]] = None
     ) -> FetchResponse:
-        """Fetch a website, convert its HTML content to Markdown, and return
-        it. This tool should be used to fetch tutorials and example codes from
-        the quri-sdk documentation site. Use this when the user requests to see
-        a tutorial or example code, or use it when you need to learn how to do
-        something using one of the tutorials or examples.
+        """Fetch a website, convert its HTML content to Markdown, and return it. This
+        tool should be used to fetch tutorials and example codes from the quri-sdk
+        documentation site. Use this when the user requests to see a tutorial or example
+        code, or use it when you need to learn how to do something using one of the
+        tutorials or examples.
 
         Args:
             url (str): URL of the website to fetch.
@@ -67,10 +68,10 @@ def get_mcp_server() -> FastMCP:
     async def fetch_raw_python(
         url: str, headers: Optional[dict[str, str]] = None
     ) -> FetchResponse:
-        """This function should be used to fetch files directly from the quri-
-        sdk repository. Use this to fetch python source code when needed. If
-        you are unsure what to fetch, try first fetching the repository file-
-        tree using one of the other tools.
+        """This function should be used to fetch files directly from the quri- sdk
+        repository. Use this to fetch python source code when needed. If you are unsure
+        what to fetch, try first fetching the repository file- tree using one of the
+        other tools.
 
         Args:
             url (str): URL of the website to fetch.
@@ -89,10 +90,10 @@ def get_mcp_server() -> FastMCP:
     async def fetch_raw_python_notebook(
         url: str, headers: Optional[dict[str, str]] = None
     ) -> FetchResponse:
-        """This function should be used to fetch files directly from the quri-
-        sdk repository. Use this to fetch python notebooks when needed. If you
-        are unsure what to fetch, try first fetching the repository file-tree
-        using one of the other tools.
+        """This function should be used to fetch files directly from the quri- sdk
+        repository. Use this to fetch python notebooks when needed. If you are unsure
+        what to fetch, try first fetching the repository file-tree using one of the
+        other tools.
 
         Args:
             url (str): URL of the website to fetch.
@@ -106,6 +107,33 @@ def get_mcp_server() -> FastMCP:
 
         args = FetchRequestArgs(url=url, headers=headers)
         return await Fetcher.json(args)
+
+    @mcp.tool()
+    async def check_code(
+        code: str,
+        # dependencies: Optional[list[str]] = None,
+        # execute_code_after_check: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        """This function should be used to check the code produced by a LLM. The code
+        is passed directly as python executable string - note this does not support
+        notebooks! This function creates a virtual environment for code evaluation. It
+        first checks that the code would run. Then it checks that the typing
+        information provided makes sense. It then optionally runs the code.
+
+        Args:
+            code (str): The python code in a single string.
+            dependencies: Additional dependencies to include in the virtual environment besides quri-sdk
+            execuyte_code_after_check: Whether to execute the code directly in the virtual environment to see if it runs according to expectations
+        """
+        # if dependencies is None:
+        dependencies = []
+        # if not "quri_sdk" in dependencies:
+        dependencies.append("quri_sdk")
+
+        # if execute_code_after_check is None:
+        run_code_in_temporary_venv(code, dependencies)
+        # else:
+        #     run_code_in_temporary_venv(code, dependencies, execute_code_after_check)
 
     return mcp
 

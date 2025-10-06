@@ -11,6 +11,4 @@ _quri_sdk_start = TextResource(
     text=quri_sdk_start_prompt,
 )
 
-all_text_resources = (
-    _quri_sdk_start,
-)
+all_text_resources = (_quri_sdk_start,)

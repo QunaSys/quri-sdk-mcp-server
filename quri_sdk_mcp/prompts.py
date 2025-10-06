@@ -35,6 +35,9 @@ The following are recommended workflows for handling user requests using the abo
 2. Following the outlined code examples, generate code for the user
 3. Do preparation action c. and find any utility functions that may help refactor the code you generated
 4. If you found such utilities use them with your generated code
+5. Check that the code runs properly by using the check_code tool
+6. If the code cannot run, figure out why by looking at the output and make necessary changes until it runs properly
+7. If the user asks you to run the code, rerun the check_code tool with execute_code_after_check set to True, after warning the user that the generated code may take time to run
 
 ## User asks you to generate code for a new feature in quri-sdk
 1. Do preparation actions a. b. and c.
@@ -43,6 +46,10 @@ The following are recommended workflows for handling user requests using the abo
 4. Write the feature while conforming to the interface code discovered in 3. and keeping in mind the user experience of similar features discovered in 4. if any were found
 5. find any utility functions in the code-base that may help refactor the code you generated
 6. If you found such utilities use them with your generated code
+7. Add a minimal example to the bottom of your generated code for the user to run
+8. Check that the code runs properly by using the check_code tool
+9. If the code cannot run, figure out why by looking at the output and make necessary changes until it runs properly
+10. If the user asks you to run the code, rerun the check_code tool with execute_code_after_check set to True, after warning the user that the generated code may take time to run
 
 ## User asks you to implement an algorithm for quri-sdk
 1. Do preparation action c.
@@ -52,6 +59,10 @@ The following are recommended workflows for handling user requests using the abo
 5. Generate the python file while conforming to the interface code
 6. find any utility functions in the code-base that may help refactor the code you generated
 7. If you found such utilities use them with your generated code
+8. Add a minimal example to the bottom of your generated code for the user to run
+9. Check that the code runs properly by using the check_code tool
+10. If the code cannot run, figure out why by looking at the output and make necessary changes until it runs properly
+11. If the user asks you to run the code, rerun the check_code tool with execute_code_after_check set to True, after warning the user that the generated code may take time to run
 
 ## User asks you to generate code to estimate quantum resources required to accomplish a specific task
 1. Do preparation actions a. and b.
@@ -60,5 +71,8 @@ The following are recommended workflows for handling user requests using the abo
 4. Use existing implementations of the algorithm in quri-algo if available
 5. If it is not available in quri-algo, see if you can find an implementation in the examples or tutorials
 6. Use QURI VM to analyze the algorithm. If you are unsure how, check the QURI VM tutorials
+7. Check that the code runs properly by using the check_code tool
+8. If the code cannot run, figure out why by looking at the output and make necessary changes until it runs properly
+9. If the user asks you to run the code, rerun the check_code tool with execute_code_after_check set to True, after warning the user that the generated code may take time to run
 
 """

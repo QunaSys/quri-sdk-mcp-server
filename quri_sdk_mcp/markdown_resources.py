@@ -9,8 +9,7 @@ class MarkdownResource(Resource):
     url: str = Field(description="URL to fetch content from")
 
     async def get_fetch_response(self) -> FetchResponse:
-        """Fetch a website, convert its HTML content to Markdown, and return
-        it.
+        """Fetch a website, convert its HTML content to Markdown, and return it.
 
         Returns:
             FetchResponse: An object containing the Markdown content or an error message.
