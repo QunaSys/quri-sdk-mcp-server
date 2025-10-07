@@ -3,6 +3,7 @@ from mcp.server.fastmcp.resources import HttpResource
 from fetch_tools import tool_from_resource
 from markdown_resources import all_markdown_resources
 from python_source_code_resources import all_python_source_code_resources
+from bench_resource import all_bench_resources
 from text_resources import all_text_resources
 from fetch import Fetcher, FetchRequestArgs, FetchResponse
 from typing import Optional
@@ -18,7 +19,7 @@ def get_mcp_server() -> FastMCP:
     - Quantum circuit simulation using QURI Parts Qulacs
     - Quantum circuit synthesis using QURI Parts QSub module
     - Quantum algorithm deployment using QURI Algo
-    - Quantum resource estimation using QURI VM
+    - Quantum resource estimation using QURI VM & QURI Bench
 
     ## Tools
     - Tools are provided that fetch documentation
@@ -29,6 +30,10 @@ def get_mcp_server() -> FastMCP:
     )
 
     for r in all_text_resources:
+        mcp.add_resource(r)
+        mcp.add_tool(tool_from_resource(r))
+
+    for r in all_bench_resources:
         mcp.add_resource(r)
         mcp.add_tool(tool_from_resource(r))
 
