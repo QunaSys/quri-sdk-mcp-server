@@ -111,8 +111,8 @@ def get_mcp_server() -> FastMCP:
     @mcp.tool()
     async def check_code(
         code: str,
-        # dependencies: Optional[list[str]] = None,
-        # execute_code_after_check: Optional[bool] = None,
+        dependencies: Optional[list[str]] = None,
+        execute_code_after_check: Optional[bool] = None,
     ) -> dict[str, Any]:
         """This function should be used to check the code produced by a LLM. The code
         is passed directly as python executable string - note this does not support
@@ -125,15 +125,15 @@ def get_mcp_server() -> FastMCP:
             dependencies: Additional dependencies to include in the virtual environment besides quri-sdk
             execuyte_code_after_check: Whether to execute the code directly in the virtual environment to see if it runs according to expectations
         """
-        # if dependencies is None:
-        dependencies = []
-        # if not "quri_sdk" in dependencies:
-        dependencies.append("quri_sdk")
+        if dependencies is None:
+            dependencies = []
+        if not "quri_sdk" in dependencies:
+            dependencies.append("quri_sdk")
 
-        # if execute_code_after_check is None:
-        run_code_in_temporary_venv(code, dependencies)
-        # else:
-        #     run_code_in_temporary_venv(code, dependencies, execute_code_after_check)
+        if execute_code_after_check is None:
+            return run_code_in_temporary_venv(code, dependencies)
+        else:
+            return run_code_in_temporary_venv(code, dependencies, execute_code_after_check)
 
     return mcp
 

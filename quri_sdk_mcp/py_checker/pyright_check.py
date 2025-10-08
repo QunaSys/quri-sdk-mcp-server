@@ -5,7 +5,53 @@ import tempfile
 import os
 import sys
 import re
+import json
+from pathlib import Path
 
+def create_pyrightconfig(venv_path: Path) -> Path:
+    """
+    Create a pyrightconfig.json file for the given virtual environment.
+    
+    Args:
+        venv_path: Path to the virtual environment directory
+        output_dir: Directory where the config file should be created
+        
+    Returns:
+        Path to the created pyrightconfig.json file
+    """
+    # Get the venv name and parent directory
+    venv_name = venv_path.name
+    venv_parent = venv_path.parent
+    
+    # Determine the Python executable path based on OS
+    if (venv_path / "bin" / "python").exists():
+        python_path = str(venv_path / "bin" / "python")
+    else:  # Windows
+        python_path = str(venv_path / "Scripts" / "python.exe")
+    
+    # Create the configuration
+    config = {
+        "venv": venv_name,
+        "venvPath": str(venv_parent),
+        "pythonVersion": "3.13",  # Adjust as needed
+        "pythonPath": python_path,
+        "typeCheckingMode": "basic",
+        "useLibraryCodeForTypes": True,
+        "reportMissingImports": True,
+        "reportMissingTypeStubs": False,
+        "executionEnvironments": [
+            {
+                "root": "."
+            }
+        ]
+    }
+    
+    # Write the config file
+    config_path = venv_path / "pyrightconfig.json"
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    return config_path
 
 # This is the core Pyright checking logic adapted from our previous conversation.
 # It will be called by the main function to check code using a specific Pyright executable.
@@ -197,10 +243,15 @@ def run_code_in_temporary_venv(
                 text=True,
                 encoding="utf-8",
             )
+            pyright_config_path = create_pyrightconfig(Path(venv_dir))
             results["dependencies_installed"] = True
             results["log"].append(
                 f"Packages installed successfully:\n{install_proc.stdout}"
             )
+            with open(pyright_config_path, "r") as f:
+                results["log"].append(
+                    f"Pyright configured as {f.read()}"
+                )
         except subprocess.CalledProcessError as e:
             results["log"].append(
                 f"Package installation failed for {pip_exe} install {' '.join(packages_to_install)}:\n{e.stderr}\nStdout was:\n{e.stdout}"
@@ -220,7 +271,7 @@ def run_code_in_temporary_venv(
 
             # 4. Perform Pyright static check
             pyright_result = _run_pyright_on_file(
-                ai_code_file_for_check.name, pyright_exe
+                ai_code_file_for_check.name, python_exe
             )
             results["pyright_check_result"] = pyright_result
             results["log"].append(
