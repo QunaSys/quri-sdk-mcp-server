@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
 import json
 
-from .types import FetchRequestArgs, FetchResponse
+from quri_sdk_mcp.fetch.types import FetchRequestArgs, FetchResponse
 
 
 class NoImagesConverter(MarkdownConverter):

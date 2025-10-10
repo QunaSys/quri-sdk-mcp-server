@@ -1,6 +1,6 @@
 from pydantic import Field
 from mcp.server.fastmcp.resources import Resource
-from fetch.fetcher import FetchRequestArgs, FetchResponse, Fetcher
+from quri_sdk_mcp.fetch.fetcher import FetchRequestArgs, FetchResponse, Fetcher
 
 
 class MarkdownResource(Resource):

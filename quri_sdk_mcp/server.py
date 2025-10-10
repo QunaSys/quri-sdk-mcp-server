@@ -1,11 +1,11 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.resources import HttpResource
-from fetch_tools import tool_from_resource
-from markdown_resources import all_markdown_resources
-from python_source_code_resources import all_python_source_code_resources
-from text_resources import all_text_resources
-from fetch import Fetcher, FetchRequestArgs, FetchResponse
-from py_checker import run_code_in_temporary_venv
+from quri_sdk_mcp.fetch_tools import tool_from_resource
+from quri_sdk_mcp.markdown_resources import all_markdown_resources
+from quri_sdk_mcp.python_source_code_resources import all_python_source_code_resources
+from quri_sdk_mcp.text_resources import all_text_resources
+from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs, FetchResponse
+from quri_sdk_mcp.py_checker import run_code_in_temporary_venv
 from typing import Optional, Any
 
 

@@ -1,4 +1,4 @@
-from prompts import quri_sdk_start_prompt
+from quri_sdk_mcp.prompts import quri_sdk_start_prompt
 from mcp.server.fastmcp.resources import TextResource
 
 _quri_sdk_start = TextResource(
