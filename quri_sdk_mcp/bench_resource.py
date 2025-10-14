@@ -207,6 +207,12 @@ def trotter_eval(
 ) -> float:
     """Estimates the trotter error coefficient w.
 
+    Warning: 
+        For systems with more than 6 spatial orbitals, a special 
+        extrapolation procedure is required to calculate `w`. 
+        Please consult the documentation for `trotter_error_coefficient_eval` 
+        for  details on this procedure.
+
     Args:
         qubit_hamiltonian: The qubit Hamiltonian.
         rs: Number of Trotter steps for computing the Trotter error.
@@ -288,11 +294,53 @@ _dfq_eval_main = TextResource(
     """,
 )
 
+
+_te_qsci_eval_api = '''
+def te_qsci_eval(
+    mole_data: MolecularData,
+    eps: float,
+    device_generation_funcs: Sequence[DeviceGenFunction],
+    conf_rec: Literal["no_rec", "all", "S2"] = "all",
+) -> pd.DataFrame:
+    """Evaluate TE QSCI
+
+    Args:
+        mole_data: A :class:`MolecularData`.
+        eps: The target accuracy one wants to reach.
+        device_generation_funcs: A series of :class:`DeviceGenFunction`.
+        conf_rec: Configuration recovery method
+    """
+'''
+
+
+_te_qsci_eval_main = TextResource(
+    uri="bench://te_qsci_eval",
+    name="te_qsci_evaluation",
+    title="te_qsci_evaluation",
+    description=f"""
+    Evaluate the performance of TE QSCI.
+    """,
+    text=f"""
+    You are responsible for evaluating the TE QSCI algorithm.
+    Turn from user input into the input of {_te_qsci_eval_api}. 
+
+    import the function with
+    ```
+    import code:
+    from eftqc_bench.tools.te_qsci_eval import te_qsci_eval
+    ```
+
+    {_common}
+    """,
+)
+
+
 all_bench_resources = (
     _qpe_eval, 
     _make_device_func_factory, 
     _mole_hamiltonian_gen, 
     _trotter_eval_main, 
     _mole_data_gen,
-    _dfq_eval_main
+    _dfq_eval_main,
+    _te_qsci_eval_main
 )
