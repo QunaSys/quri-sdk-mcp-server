@@ -1,6 +1,6 @@
 from pydantic import Field
 from mcp.server.fastmcp.resources import Resource
-from fetch.fetcher import FetchRequestArgs, FetchResponse, Fetcher
+from quri_sdk_mcp.fetch.fetcher import FetchRequestArgs, FetchResponse, Fetcher
 
 
 class MarkdownResource(Resource):
@@ -9,8 +9,7 @@ class MarkdownResource(Resource):
     url: str = Field(description="URL to fetch content from")
 
     async def get_fetch_response(self) -> FetchResponse:
-        """Fetch a website, convert its HTML content to Markdown, and return
-        it.
+        """Fetch a website, convert its HTML content to Markdown, and return it.
 
         Returns:
             FetchResponse: An object containing the Markdown content or an error message.

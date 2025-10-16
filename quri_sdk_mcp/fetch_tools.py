@@ -1,8 +1,8 @@
 from typing import Callable
 
 from mcp.server.fastmcp.resources import Resource
-from markdown_resources import MarkdownResource
-from fetch.fetcher import FetchResponse
+from quri_sdk_mcp.markdown_resources import MarkdownResource
+from quri_sdk_mcp.fetch.fetcher import FetchResponse
 
 
 def tool_from_resource(res: Resource) -> Callable[[None], FetchResponse]:
