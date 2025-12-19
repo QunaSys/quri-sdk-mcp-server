@@ -4,6 +4,7 @@ version = "0.2.0"
 description = "MCP server for QURI SDK code-generation assistance: API introspection, documentation search, and code validation"
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["mcp", "model-context-protocol", "quri", "qunasys", "quantum"]
 dependencies = [
     "docformatter>=1.7.7",
     "lxml>=6.0.2",

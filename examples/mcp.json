@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "quri-sdk": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/quri-sdk-mcp-server",
+        "run",
+        "python",
+        "-m",
+        "quri_sdk_mcp.server"
+      ]
+    }
+  }
+}
