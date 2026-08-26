@@ -11,16 +11,19 @@ per-call:
   persistent SQLite cache file, refreshed on a TTL.
 
 Remote mode crawls the deployed site rather than fetching source markdown
-from GitHub, for two reasons found during implementation: the docs source
-repo (QunaSys/quri-sdk-docusaurus) is private, so raw-file fetches would
-404/403 for the vast majority of this public server's users who don't hold
-a QunaSys-scoped GITHUB_TOKEN; and the site's actually-deployed content
-doesn't match that repo's default branch anyway (it's built from an
-in-progress branch), so fetching "the source" wouldn't even serve the right
-content for users who did have access. The live site is genuinely public
-and is definitionally always current, so there's no meaningful per-version
-ref to resolve here - it's cached as a single bucket, refreshed on a TTL
-like the plan's original "main" bucket idea.
+from GitHub, for reasons found during implementation: at the time this was
+written, the docs source repo (QunaSys/quri-sdk-docusaurus) was private, so
+raw-file fetches would 404/403 for the vast majority of this public server's
+users who don't hold a QunaSys-scoped GITHUB_TOKEN, and the site's
+actually-deployed content didn't match that repo's default branch anyway (it
+was built from an in-progress branch). That repo is being retired in favor
+of deploying docs straight from the (public) quri-sdk code repo - but since
+this crawls the deployed site rather than any particular source repo, it
+doesn't care which repo builds the site and needs no update for that move.
+The live site is genuinely public and is definitionally always current, so
+there's no meaningful per-version ref to resolve here - it's cached as a
+single bucket, refreshed on a TTL like the plan's original "main" bucket
+idea.
 """
 
 from __future__ import annotations

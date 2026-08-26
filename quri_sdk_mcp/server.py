@@ -159,10 +159,10 @@ def get_mcp_server() -> FastMCP:
         limit: int = 10,
         working_directory: Optional[str] = None,
     ) -> list[dict[str, str]]:
-        """Searches QURI SDK documentation (tutorials, examples, community
-        docs, and release notes) via lexical keyword search. This should be
-        the first stop for finding relevant documentation - it searches the
-        actual per-version doc corpus instead of guessing a URL to fetch.
+        """Searches QURI SDK documentation (tutorials, how-to guides,
+        reference pages, and release notes) via lexical keyword search. This
+        should be the first stop for finding relevant documentation - it
+        searches the actual doc corpus instead of guessing a URL to fetch.
 
         Args:
             query (str): Free-text search terms, e.g. "qulacs sampler" or
@@ -172,13 +172,14 @@ def get_mcp_server() -> FastMCP:
                 "concept". Omit to search all categories.
             limit (int): Max number of results.
             working_directory (Optional[str]): Absolute path to a local
-                quri-sdk-docusaurus (or quri-sdk-enterprise) checkout to
-                search instead of the cached released-version corpus. Pass
-                this if the current project root itself looks like such a
-                checkout (a `docs/` directory next to a pyproject.toml
-                naming quri-parts/quri-algo/quri-vm/quri-sdk-enterprise), so
+                docs checkout (e.g. a quri-sdk or quri-sdk-enterprise
+                checkout with a `docs/` directory) to search instead of the
+                cached live-site corpus. Pass this if the current project
+                root itself looks like such a checkout (a `docs/` directory
+                next to a pyproject.toml naming
+                quri-parts/quri-algo/quri-vm/quri-sdk-enterprise), so
                 results match the exact branch being worked on instead of
-                the last resolved release. Usually not needed - this is
+                the deployed site. Usually not needed - this is
                 auto-detected from the target interpreter's editable-install
                 metadata when possible.
 
