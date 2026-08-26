@@ -1,6 +1,7 @@
 import httpx
 from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
+import importlib.metadata
 import json
 
 from quri_sdk_mcp.fetch.types import FetchRequestArgs, FetchResponse
@@ -14,11 +15,17 @@ class NoImagesConverter(MarkdownConverter):
         return ""
 
 
+try:
+    _PACKAGE_VERSION = importlib.metadata.version("mcp-server")
+except importlib.metadata.PackageNotFoundError:
+    _PACKAGE_VERSION = "0.0.0"
+
+
 class Fetcher:
     """Handles fetching and processing web content."""
 
     DEFAULT_HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Jij-MCP/0.1 (+https://github.com/Jij-Inc/Jij-MCP-Server)"
+        "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 quri-sdk-mcp-server/{_PACKAGE_VERSION} (+https://github.com/QunaSys/quri-sdk-mcp-server)"
     }
 
     @staticmethod
