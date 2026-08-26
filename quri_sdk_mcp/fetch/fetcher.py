@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
 import importlib.metadata
 import json
+import os
+import time
 
 from quri_sdk_mcp.fetch.types import FetchRequestArgs, FetchResponse
 
@@ -20,6 +22,14 @@ try:
 except importlib.metadata.PackageNotFoundError:
     _PACKAGE_VERSION = "0.0.0"
 
+GITHUB_API_HOST = "api.github.com"
+GITHUB_CACHE_TTL_SECONDS = 15 * 60
+_github_api_cache: dict[str, tuple[float, httpx.Response]] = {}
+
+
+def _is_github_cache_fresh(cached_at: float, now: float) -> bool:
+    return now - cached_at < GITHUB_CACHE_TTL_SECONDS
+
 
 class Fetcher:
     """Handles fetching and processing web content."""
@@ -35,12 +45,28 @@ class Fetcher:
         if payload.headers:
             headers.update(payload.headers)
 
+        url = str(payload.url)
+        is_github_api = payload.url.host == GITHUB_API_HOST
+
+        if is_github_api:
+            cached = _github_api_cache.get(url)
+            if cached is not None:
+                cached_at, cached_response = cached
+                if _is_github_cache_fresh(cached_at, time.monotonic()):
+                    return cached_response
+
+            token = os.environ.get("GITHUB_TOKEN")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
         async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
             try:
                 response = await client.get(
-                    str(payload.url), headers=headers
+                    url, headers=headers
                 )  # HttpUrlをstrに変換
                 response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
+                if is_github_api:
+                    _github_api_cache[url] = (time.monotonic(), response)
                 return response
             except httpx.HTTPStatusError as e:
                 raise ConnectionError(
