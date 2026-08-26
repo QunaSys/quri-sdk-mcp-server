@@ -209,8 +209,14 @@ def get_mcp_server() -> FastMCP:
     return mcp
 
 
+# Exposed at module scope (not just inside main()) so standard MCP dev
+# tooling (`mcp dev`/`mcp run`, from the mcp[cli] dependency this project
+# already declares) can find it - both expect a module-level FastMCP
+# instance, not a factory function.
+mcp = get_mcp_server()
+
+
 def main() -> None:
-    mcp = get_mcp_server()
     mcp.run(transport="stdio")
 
 
