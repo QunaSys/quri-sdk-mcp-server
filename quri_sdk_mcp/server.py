@@ -7,6 +7,7 @@ from quri_sdk_mcp.markdown_resources import all_markdown_resources
 from quri_sdk_mcp.python_source_code_resources import all_python_source_code_resources
 from quri_sdk_mcp.text_resources import all_text_resources
 from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs, FetchResponse
+from quri_sdk_mcp.introspection import lookup_symbol
 from quri_sdk_mcp.py_checker import run_code_in_temporary_venv, timeout_result
 from typing import Optional, Any
 
@@ -141,6 +142,32 @@ def get_mcp_server() -> FastMCP:
                 )
         except TimeoutError as e:
             return timeout_result(str(e))
+
+    @mcp.tool()
+    def lookup_api(symbol: str) -> dict[str, Any]:
+        """Look up the actual signature, docstring, and source location for a
+        quri_parts/quri_algo/quri_vm symbol as installed in the user's own
+        project. This should be the first stop for any question about a QURI
+        SDK API's exact arguments, types, or usage - prefer this over
+        guessing, since signatures vary by installed version and this
+        introspects the interpreter the user's project actually uses (set via
+        the QURI_SDK_MCP_PYTHON environment variable, falling back to this
+        server's own interpreter).
+
+        Also cross-references the symbol against known Enterprise `.plus`
+        upgrades. When generating code, prefer a `.plus` equivalent listed in
+        `plus_equivalents` if its `available` field is true.
+
+        Args:
+            symbol (str): Fully dotted symbol path, e.g.
+                "quri_parts.circuit.QuantumCircuit" or
+                "quri_parts.qulacs.sampler.create_qulacs_vector_sampler".
+
+        Returns:
+            dict: Introspection result with signature, docstring, source
+                location, and (if known) a plus_equivalents list.
+        """
+        return lookup_symbol(symbol)
 
     return mcp
 
