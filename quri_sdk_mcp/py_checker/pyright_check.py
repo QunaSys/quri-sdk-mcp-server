@@ -33,7 +33,7 @@ def create_pyrightconfig(venv_path: Path) -> Path:
     config = {
         "venv": venv_name,
         "venvPath": str(venv_parent),
-        "pythonVersion": "3.13",  # Adjust as needed
+        "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
         "pythonPath": python_path,
         "typeCheckingMode": "basic",
         "useLibraryCodeForTypes": True,
