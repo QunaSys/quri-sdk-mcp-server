@@ -6,6 +6,7 @@ from quri_sdk_mcp.fetch_tools import tool_from_resource
 from quri_sdk_mcp.markdown_resources import all_markdown_resources
 from quri_sdk_mcp.python_source_code_resources import all_python_source_code_resources
 from quri_sdk_mcp.text_resources import all_text_resources
+from quri_sdk_mcp.corpus import search as search_docs_corpus
 from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs, FetchResponse
 from quri_sdk_mcp.introspection import lookup_symbol
 from quri_sdk_mcp.py_checker import run_code_in_temporary_venv, timeout_result
@@ -150,6 +151,72 @@ def get_mcp_server() -> FastMCP:
                 location, source text, and (if known) a plus_equivalents list.
         """
         return await asyncio.to_thread(lookup_symbol, symbol)
+
+    @mcp.tool()
+    async def search_docs(
+        query: str,
+        categories: Optional[list[str]] = None,
+        limit: int = 10,
+        working_directory: Optional[str] = None,
+    ) -> list[dict[str, str]]:
+        """Searches QURI SDK documentation (tutorials, examples, community
+        docs, and release notes) via lexical keyword search. This should be
+        the first stop for finding relevant documentation - it searches the
+        actual per-version doc corpus instead of guessing a URL to fetch.
+
+        Args:
+            query (str): Free-text search terms, e.g. "qulacs sampler" or
+                "parametric circuit gradient".
+            categories (Optional[list[str]]): Restrict results to these
+                categories: "tutorial", "how-to", "reference", "changelog",
+                "concept". Omit to search all categories.
+            limit (int): Max number of results.
+            working_directory (Optional[str]): Absolute path to a local
+                quri-sdk-docusaurus (or quri-sdk-enterprise) checkout to
+                search instead of the cached released-version corpus. Pass
+                this if the current project root itself looks like such a
+                checkout (a `docs/` directory next to a pyproject.toml
+                naming quri-parts/quri-algo/quri-vm/quri-sdk-enterprise), so
+                results match the exact branch being worked on instead of
+                the last resolved release. Usually not needed - this is
+                auto-detected from the target interpreter's editable-install
+                metadata when possible.
+
+        Returns:
+            list[dict]: Matches as {path, category, title, snippet}, best
+                match first.
+        """
+        return await search_docs_corpus(
+            query, categories=categories, limit=limit, working_directory=working_directory
+        )
+
+    @mcp.tool()
+    async def get_example(
+        query: str,
+        limit: int = 5,
+        working_directory: Optional[str] = None,
+    ) -> list[dict[str, str]]:
+        """Finds a QURI SDK tutorial or how-to guide matching `query`. This
+        is the tool to reach for when the user asks to see an example or how
+        to do something - it's `search_docs` pre-restricted to tutorial and
+        how-to content.
+
+        Args:
+            query (str): Free-text search terms, e.g. "qulacs sampler" or
+                "parametric circuit gradient".
+            limit (int): Max number of results.
+            working_directory (Optional[str]): See `search_docs`.
+
+        Returns:
+            list[dict]: Matches as {path, category, title, snippet}, best
+                match first.
+        """
+        return await search_docs_corpus(
+            query,
+            categories=["tutorial", "how-to"],
+            limit=limit,
+            working_directory=working_directory,
+        )
 
     return mcp
 
