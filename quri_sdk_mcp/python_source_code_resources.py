@@ -1,5 +1,13 @@
 from mcp.server.fastmcp.resources.types import HttpResource
 
+from quri_sdk_mcp.env_resolution import (
+    get_versions,
+    resolve_doc_ref,
+    resolve_target_python,
+)
+
+_doc_ref = resolve_doc_ref(get_versions(resolve_target_python()))
+
 _quri_algo_algorithm_base = HttpResource(
     uri="qsdk://source/algo/algorithms/base",
     url="https://raw.githubusercontent.com/QunaSys/quri-sdk/refs/heads/main/quri-algo/quri_algo/algo/interface.py",
@@ -12,12 +20,12 @@ _quri_algo_algorithm_base = HttpResource(
 
 _quri_sdk_source_file_tree = HttpResource(
     uri="qsdk://source/tree",
-    url="https://api.github.com/repos/QunaSys/quri-sdk/git/trees/main?recursive=1",
+    url=f"https://api.github.com/repos/QunaSys/quri-sdk/git/trees/{_doc_ref}?recursive=1",
     mime_type="application/json",
     name="quri_sdk_source_code_tree",
     title="Source code tree for quri-sdk codebase",
-    description="""This resource provides the source code tree for quri-sdk.
-    
+    description=f"""This resource provides the source code tree for quri-sdk at ref `{_doc_ref}`.
+
     Using the information here you can get an overview of the code-base structure and source files to fetch and analyse.""",
 )
 
