@@ -1,7 +1,6 @@
 import asyncio
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.resources import HttpResource
 from quri_sdk_mcp.fetch_tools import tool_from_resource
 from quri_sdk_mcp.markdown_resources import all_markdown_resources
 from quri_sdk_mcp.python_source_code_resources import all_python_source_code_resources
@@ -210,6 +209,10 @@ def get_mcp_server() -> FastMCP:
     return mcp
 
 
-if __name__ == "__main__":
+def main() -> None:
     mcp = get_mcp_server()
     mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()
