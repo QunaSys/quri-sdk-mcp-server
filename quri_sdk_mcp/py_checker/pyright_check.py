@@ -191,6 +191,7 @@ def create_pyrightconfig(
 
     return config
 
+
 def _run_pyright_on_file(
     code_file_to_check: str,
     pyright_executable_in_venv: str,

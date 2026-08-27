@@ -6,5 +6,3 @@
 # see https://black.readthedocs.io/en/stable/the_black_code_style/current_style.html#slices
 extend-ignore = E501, W293, E203
 exclude = .venv, .git, __pycache__, .mypy_cache, .uv_cache, build, dist
-per-file-ignores =
-    quri_sdk_mcp/py_checker/pyright_check.py:E302,E713
