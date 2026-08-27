@@ -213,17 +213,20 @@ async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
 
     Selection order:
     1. `working_directory` given explicitly - search it directly.
-    2. Else, if the target interpreter's `quri-parts` install is editable
-       and its resolved local path itself contains recognizable doc content
-       (a `docs/` or `release-notes/` directory next to it) - search that.
+    2. Else, if the target interpreter has an editable `quri-parts` or
+       `quri-sdk-enterprise` install whose resolved local path itself
+       contains recognizable doc content (a `docs/` or `release-notes/`
+       directory next to it) - search that.
     3. Else, the persistent live-site crawl cache.
     """
     if working_directory is not None:
         return build_local_corpus(Path(working_directory))
 
-    editable_source = get_editable_source(resolve_target_python())
-    if editable_source is not None and _looks_like_docs_checkout(editable_source):
-        return build_local_corpus(editable_source)
+    python = resolve_target_python()
+    for package in ("quri-parts", "quri-sdk-enterprise"):
+        editable_source = await asyncio.to_thread(get_editable_source, python, package)
+        if editable_source is not None and _looks_like_docs_checkout(editable_source):
+            return build_local_corpus(editable_source)
 
     cache_path = await build_remote_corpus()
     return sqlite3.connect(cache_path)

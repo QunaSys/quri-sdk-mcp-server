@@ -17,6 +17,7 @@ from quri_sdk_mcp.corpus.pipeline import (
     _parse_search_index,
     build_local_corpus,
     build_remote_corpus,
+    get_corpus,
 )
 
 
@@ -87,6 +88,28 @@ def test_build_local_corpus_indexes_known_folders_only():
             conn.close()
 
 
+def test_get_corpus_falls_back_to_enterprise_checkout():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        tutorial_dir = root / "docs" / "tutorials" / "circuits"
+        tutorial_dir.mkdir(parents=True)
+        (tutorial_dir / "index.md").write_text("# Circuits\n\nEnterprise-only content.")
+
+        def fake_get_editable_source(python, package="quri-parts"):
+            return root if package == "quri-sdk-enterprise" else None
+
+        with patch(
+            "quri_sdk_mcp.corpus.pipeline.get_editable_source",
+            side_effect=fake_get_editable_source,
+        ):
+            conn = asyncio.run(get_corpus(None))
+        try:
+            results = db.query(conn, "Enterprise")
+            assert len(results) == 1
+        finally:
+            conn.close()
+
+
 def test_concurrent_remote_rebuilds_do_not_collide():
     with tempfile.TemporaryDirectory() as tmp_dir:
         cache_path = Path(tmp_dir) / "docs-corpus.sqlite3"
@@ -124,5 +147,6 @@ if __name__ == "__main__":
     test_parse_search_index_strips_js_wrapper()
     test_looks_like_docs_checkout()
     test_build_local_corpus_indexes_known_folders_only()
+    test_get_corpus_falls_back_to_enterprise_checkout()
     test_concurrent_remote_rebuilds_do_not_collide()
     print("ok")
