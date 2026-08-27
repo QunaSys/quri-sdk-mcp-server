@@ -55,16 +55,11 @@ def _check_plus_namespaces() -> dict:
     return namespaces
 
 
-def _resolve_module_path(dotted: str) -> tuple[str, list[str]]:
-    """Splits a dotted symbol into its module path and remaining attributes.
-
-    Tries the longest prefix of `dotted` that resolves to a locatable module
-    via `find_spec`, without executing it, so this also works for compiled
-    modules under license gating that would raise on live import.
-
-    Returns:
-        (module_name, remaining_attrs) - remaining_attrs is empty if `dotted`
-        names a module itself.
+def _walk_resolvable_prefixes(dotted: str):
+    """Yields (candidate, spec, remaining_attrs) for each dotted-name prefix of
+    `dotted`, longest first, that resolves to a locatable module via
+    `find_spec` (without executing it, so this also works for compiled
+    modules under license gating that would raise on live import).
     """
     parts = dotted.split(".")
     for i in range(len(parts), 0, -1):
@@ -74,7 +69,20 @@ def _resolve_module_path(dotted: str) -> tuple[str, list[str]]:
         except Exception:
             spec = None
         if spec is not None:
-            return candidate, parts[i:]
+            yield candidate, spec, parts[i:]
+
+
+def _resolve_module_path(dotted: str) -> tuple[str, list[str]]:
+    """Splits a dotted symbol into its module path and remaining attributes.
+
+    Tries the longest prefix of `dotted` that resolves to a locatable module.
+
+    Returns:
+        (module_name, remaining_attrs) - remaining_attrs is empty if `dotted`
+        names a module itself.
+    """
+    for candidate, _spec, remaining in _walk_resolvable_prefixes(dotted):
+        return candidate, remaining
     raise ModuleNotFoundError(
         f"No importable module prefix found for {dotted!r}"
     )
@@ -182,17 +190,7 @@ def _pyi_path_for_module(module_name: str) -> Path | None:
     even though the compiled module itself isn't independently locatable at
     runtime.
     """
-    parts = module_name.split(".")
-    for i in range(len(parts), 0, -1):
-        candidate = ".".join(parts[:i])
-        try:
-            spec = importlib.util.find_spec(candidate)
-        except Exception:
-            spec = None
-        if spec is None:
-            continue
-
-        remaining = parts[i:]
+    for _candidate, spec, remaining in _walk_resolvable_prefixes(module_name):
         if not remaining:
             return Path(spec.origin).with_suffix(".pyi") if spec.origin else None
 
