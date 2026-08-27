@@ -1,5 +1,6 @@
 from typing import Any
 
+import contextlib
 import hashlib
 import subprocess
 import tempfile
@@ -12,8 +13,11 @@ import time
 import json
 from pathlib import Path
 
-VENV_CACHE_TTL_DAYS = 30
+VENV_PRUNE_TTL_DAYS = 30
+VENV_FRESHNESS_TTL_DAYS = 1
 VENV_CACHE_PRUNE_PROBABILITY = 1 / 20
+VENV_LOCK_TIMEOUT_SECONDS = 600.0
+VENV_LOCK_STALE_SECONDS = 900.0
 
 
 def _venv_cache_root() -> Path:
@@ -31,12 +35,12 @@ def _venv_cache_key(dependencies: list[str], python_version_tag: str) -> str:
 
 
 def _prune_stale_venvs(cache_root: Path) -> None:
-    """Opportunistically deletes cached venvs untouched for VENV_CACHE_TTL_DAYS."""
+    """Opportunistically deletes cached venvs untouched for VENV_PRUNE_TTL_DAYS."""
     # ponytail: naive time-based prune, switch to LRU-by-size if disk pressure
     # becomes real
     if random.random() >= VENV_CACHE_PRUNE_PROBABILITY:
         return
-    cutoff = time.time() - VENV_CACHE_TTL_DAYS * 86400
+    cutoff = time.time() - VENV_PRUNE_TTL_DAYS * 86400
     for venv_dir in cache_root.iterdir():
         marker = venv_dir / ".ready"
         if marker.exists() and marker.stat().st_mtime < cutoff:
@@ -48,6 +52,52 @@ def _venv_executable(venv_dir: Path, name: str) -> str:
     bin_dir = "Scripts" if sys.platform == "win32" else "bin"
     suffix = ".exe" if sys.platform == "win32" else ""
     return str(venv_dir / bin_dir / f"{name}{suffix}")
+
+
+@contextlib.contextmanager
+def _venv_lock(cache_root: Path, cache_key: str):
+    """Cross-process advisory lock so concurrent calls for the same cache key don't
+    race on venv creation. Path.mkdir() without exist_ok is atomic on POSIX and NTFS.
+    """
+    lock_dir = cache_root / f"{cache_key}.lock"
+    deadline = time.monotonic() + VENV_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            lock_dir.mkdir()
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - lock_dir.stat().st_mtime
+            except FileNotFoundError:
+                continue  # holder released it between our mkdir and stat
+            if age > VENV_LOCK_STALE_SECONDS:
+                # ponytail: age-based stale-lock steal, no pid-liveness check;
+                # revisit if a crashed holder is ever actually observed
+                shutil.rmtree(lock_dir, ignore_errors=True)
+                continue
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"Timed out waiting for venv lock: {cache_key}")
+            time.sleep(0.2)
+    try:
+        yield
+    finally:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+
+
+def _venv_marker_data(marker_path: Path) -> dict | None:
+    """Reads the venv marker's JSON payload, or None if missing/unreadable."""
+    try:
+        return json.loads(marker_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _is_venv_fresh(marker_path: Path) -> bool:
+    """Whether a cached venv was created within VENV_FRESHNESS_TTL_DAYS."""
+    data = _venv_marker_data(marker_path)
+    if not data or "created_at" not in data:
+        return False
+    return time.time() - data["created_at"] <= VENV_FRESHNESS_TTL_DAYS * 86400
 
 
 def create_pyrightconfig(venv_path: Path) -> Path:
@@ -66,10 +116,7 @@ def create_pyrightconfig(venv_path: Path) -> Path:
     venv_parent = venv_path.parent
     
     # Determine the Python executable path based on OS
-    if (venv_path / "bin" / "python").exists():
-        python_path = str(venv_path / "bin" / "python")
-    else:  # Windows
-        python_path = str(venv_path / "Scripts" / "python.exe")
+    python_path = _venv_executable(venv_path, "python")
     
     # Create the configuration
     config = {
@@ -246,66 +293,72 @@ def run_code_in_temporary_venv(
     marker_path = venv_dir / ".ready"
     results["venv_path"] = str(venv_dir)
 
-    if venv_dir.is_dir() and marker_path.exists():
-        results["venv_created"] = True
-        results["dependencies_installed"] = True
-        results["log"].append(f"Reusing cached venv: {venv_dir}")
-    else:
-        if venv_dir.exists():
-            shutil.rmtree(venv_dir, ignore_errors=True)
-
-        # 1. Create the virtual environment
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "venv", str(venv_dir)],
-                check=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
+    with _venv_lock(cache_root, cache_key):
+        if venv_dir.is_dir() and marker_path.exists() and _is_venv_fresh(marker_path):
             results["venv_created"] = True
-            results["log"].append("Virtual environment created successfully.")
-        except subprocess.CalledProcessError as e:
-            results["log"].append(f"Venv creation failed: {e.stderr}")
-            shutil.rmtree(venv_dir, ignore_errors=True)
-            return results  # Critical failure, stop here
-
-        pip_exe = _venv_executable(venv_dir, "pip")
-
-        # 2. Install dependencies and Pyright
-        # Pyright CLI is available via pip as 'pyright'
-        packages_to_install = dependencies + ["pyright"]
-        if not packages_to_install:  # Ensure there's at least 'pyright'
-            packages_to_install = ["pyright"]
-        elif "pyright" not in packages_to_install:
-            packages_to_install.append("pyright")
-
-        try:
-            install_command = [pip_exe, "install"] + packages_to_install
-            results["log"].append(f"Installing packages: {' '.join(install_command)}")
-            install_proc = subprocess.run(
-                install_command,
-                check=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
-            pyright_config_path = create_pyrightconfig(venv_dir)
             results["dependencies_installed"] = True
-            results["log"].append(
-                f"Packages installed successfully:\n{install_proc.stdout}"
-            )
-            with open(pyright_config_path, "r") as f:
-                results["log"].append(
-                    f"Pyright configured as {f.read()}"
+            results["log"].append(f"Reusing cached venv: {venv_dir}")
+            marker_path.touch()  # refresh last-used time for the prune TTL
+        else:
+            if venv_dir.exists():
+                shutil.rmtree(venv_dir, ignore_errors=True)
+
+            # 1. Create the virtual environment
+            # ponytail: always the server's own interpreter, not resolve_target_python()
+            # — dependencies are freshly pip-installed either way, so only the venv's
+            # Python *language* version would change; not worth an extra subprocess
+            # call in the cache-key computation for that.
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "venv", str(venv_dir)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
                 )
-            marker_path.touch()
-        except subprocess.CalledProcessError as e:
-            results["log"].append(
-                f"Package installation failed for {pip_exe} install {' '.join(packages_to_install)}:\n{e.stderr}\nStdout was:\n{e.stdout}"
-            )
-            shutil.rmtree(venv_dir, ignore_errors=True)
-            return results  # Critical failure
+                results["venv_created"] = True
+                results["log"].append("Virtual environment created successfully.")
+            except subprocess.CalledProcessError as e:
+                results["log"].append(f"Venv creation failed: {e.stderr}")
+                shutil.rmtree(venv_dir, ignore_errors=True)
+                return results  # Critical failure, stop here
+
+            pip_exe = _venv_executable(venv_dir, "pip")
+
+            # 2. Install dependencies and Pyright
+            # Pyright CLI is available via pip as 'pyright'
+            packages_to_install = dependencies + ["pyright"]
+            if not packages_to_install:  # Ensure there's at least 'pyright'
+                packages_to_install = ["pyright"]
+            elif "pyright" not in packages_to_install:
+                packages_to_install.append("pyright")
+
+            try:
+                install_command = [pip_exe, "install"] + packages_to_install
+                results["log"].append(f"Installing packages: {' '.join(install_command)}")
+                install_proc = subprocess.run(
+                    install_command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                )
+                pyright_config_path = create_pyrightconfig(venv_dir)
+                results["dependencies_installed"] = True
+                results["log"].append(
+                    f"Packages installed successfully:\n{install_proc.stdout}"
+                )
+                with open(pyright_config_path, "r") as f:
+                    results["log"].append(
+                        f"Pyright configured as {f.read()}"
+                    )
+                marker_path.write_text(json.dumps({"created_at": time.time()}))
+            except subprocess.CalledProcessError as e:
+                results["log"].append(
+                    f"Package installation failed for {pip_exe} install {' '.join(packages_to_install)}:\n{e.stderr}\nStdout was:\n{e.stdout}"
+                )
+                shutil.rmtree(venv_dir, ignore_errors=True)
+                return results  # Critical failure
 
     python_exe = _venv_executable(venv_dir, "python")
 
@@ -344,18 +397,24 @@ def run_code_in_temporary_venv(
                     "Skipped due to Pyright errors."
                 )
             else:
-                results["log"].append(
-                    f"Executing AI code with: {python_exe} {ai_code_path}"
-                )
                 results["code_execution_result"]["executed"] = True
                 try:
-                    exec_proc = subprocess.run(
-                        [python_exe, ai_code_path],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        timeout=30,  # Added timeout
-                    )
+                    # ponytail: copy before executing untrusted code so the persisted
+                    # cache tree is never mutated by whatever the code does.
+                    with tempfile.TemporaryDirectory(prefix="ai_code_venv_") as tmp_dir:
+                        exec_venv_dir = Path(tmp_dir) / "venv"
+                        shutil.copytree(venv_dir, exec_venv_dir)
+                        exec_python_exe = _venv_executable(exec_venv_dir, "python")
+                        results["log"].append(
+                            f"Executing AI code with: {exec_python_exe} {ai_code_path}"
+                        )
+                        exec_proc = subprocess.run(
+                            [exec_python_exe, ai_code_path],
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            timeout=30,  # Added timeout
+                        )
                     results["code_execution_result"]["success"] = (
                         exec_proc.returncode == 0
                     )
