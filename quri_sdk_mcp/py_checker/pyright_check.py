@@ -145,7 +145,7 @@ def create_pyrightconfig(venv_path: Path) -> Path:
 # This is the core Pyright checking logic adapted from our previous conversation.
 # It will be called by the main function to check code using a specific Pyright executable.
 def _run_pyright_on_file(
-    code_file_to_check: str, pyright_executable_in_venv: str
+    code_file_to_check: str, pyright_executable_in_venv: str, project_dir: str
 ) -> dict:
     """Runs Pyright on a specified file using a specific Pyright executable.
 
@@ -159,7 +159,7 @@ def _run_pyright_on_file(
 
     try:
         process = subprocess.run(
-            [pyright_executable_in_venv, code_file_to_check],
+            [pyright_executable_in_venv, "-p", project_dir, code_file_to_check],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -304,8 +304,8 @@ def run_code_in_temporary_venv(
                 shutil.rmtree(venv_dir, ignore_errors=True)
 
             # 1. Create the virtual environment
-            # ponytail: always the server's own interpreter, not resolve_target_python()
-            # — dependencies are freshly pip-installed either way, so only the venv's
+            # ponytail: always the server's own interpreter, not resolve_target_python().
+            # Dependencies are freshly pip-installed either way, so only the venv's
             # Python *language* version would change; not worth an extra subprocess
             # call in the cache-key computation for that.
             try:
@@ -360,88 +360,96 @@ def run_code_in_temporary_venv(
                 shutil.rmtree(venv_dir, ignore_errors=True)
                 return results  # Critical failure
 
-    python_exe = _venv_executable(venv_dir, "python")
+        # Venv usage (pyright + optional execution) stays inside the lock so a
+        # concurrent call can't rebuild/rmtree this venv while it's in use.
+        pyright_exe = _venv_executable(venv_dir, "pyright")
 
-    # 3. Write AI code to a file in the system temp dir (not the shared, cached
-    # venv dir, so concurrent calls reusing the same venv don't collide).
-    fd, ai_code_path = tempfile.mkstemp(prefix="ai_code_", suffix=".py")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(ai_code_string)
-        results["log"].append(f"AI code written to: {ai_code_path}")
+        # 3. Write AI code to a file in the system temp dir (not the shared, cached
+        # venv dir, so concurrent calls reusing the same venv don't collide).
+        fd, ai_code_path = tempfile.mkstemp(prefix="ai_code_", suffix=".py")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(ai_code_string)
+            results["log"].append(f"AI code written to: {ai_code_path}")
 
-        # 4. Perform Pyright static check
-        pyright_result = _run_pyright_on_file(ai_code_path, python_exe)
-        results["pyright_check_result"] = pyright_result
-        results["log"].append(
-            f"Pyright check completed. Success: {pyright_result['success']}"
-        )
-        if not pyright_result["success"]:
-            results["log"].append(
-                f"Pyright found errors:\n{pyright_result['output']}"
+            # 4. Perform Pyright static check
+            pyright_result = _run_pyright_on_file(
+                ai_code_path, pyright_exe, str(venv_dir)
             )
-            # Optionally, you might not want to proceed if Pyright fails.
-            # For now, we'll record it and proceed based on execute_code_after_check.
-
-        # 5. Optionally execute the code if Pyright check was successful (or if forced)
-        if execute_code_after_check:
+            results["pyright_check_result"] = pyright_result
+            results["log"].append(
+                f"Pyright check completed. Success: {pyright_result['success']}"
+            )
             if not pyright_result["success"]:
                 results["log"].append(
-                    "Skipping code execution due to Pyright errors."
+                    f"Pyright found errors:\n{pyright_result['output']}"
                 )
-                results["code_execution_result"]["executed"] = (
-                    True  # Attempted, but skipped
-                )
-                results["code_execution_result"]["success"] = False
-                results["code_execution_result"]["stderr"] = (
-                    "Skipped due to Pyright errors."
-                )
-            else:
-                results["code_execution_result"]["executed"] = True
-                try:
-                    # ponytail: copy before executing untrusted code so the persisted
-                    # cache tree is never mutated by whatever the code does.
-                    with tempfile.TemporaryDirectory(prefix="ai_code_venv_") as tmp_dir:
-                        exec_venv_dir = Path(tmp_dir) / "venv"
-                        shutil.copytree(venv_dir, exec_venv_dir)
-                        exec_python_exe = _venv_executable(exec_venv_dir, "python")
-                        results["log"].append(
-                            f"Executing AI code with: {exec_python_exe} {ai_code_path}"
-                        )
-                        exec_proc = subprocess.run(
-                            [exec_python_exe, ai_code_path],
-                            capture_output=True,
-                            text=True,
-                            encoding="utf-8",
-                            timeout=30,  # Added timeout
-                        )
-                    results["code_execution_result"]["success"] = (
-                        exec_proc.returncode == 0
-                    )
-                    results["code_execution_result"]["stdout"] = exec_proc.stdout
-                    results["code_execution_result"]["stderr"] = exec_proc.stderr
-                    results["code_execution_result"]["return_code"] = (
-                        exec_proc.returncode
-                    )
+                # Optionally, you might not want to proceed if Pyright fails.
+                # For now, we'll record it and proceed based on execute_code_after_check.
+
+            # 5. Optionally execute the code if Pyright check was successful (or if forced)
+            if execute_code_after_check:
+                if not pyright_result["success"]:
                     results["log"].append(
-                        f"Code execution finished. Return code: {exec_proc.returncode}"
+                        "Skipping code execution due to Pyright errors."
                     )
-                except subprocess.TimeoutExpired:
-                    results["log"].append("Code execution timed out.")
+                    results["code_execution_result"]["executed"] = (
+                        True  # Attempted, but skipped
+                    )
                     results["code_execution_result"]["success"] = False
                     results["code_execution_result"]["stderr"] = (
-                        "Execution timed out after 30 seconds."
+                        "Skipped due to Pyright errors."
                     )
-                except Exception as e:
-                    results["log"].append(
-                        f"Code execution threw an exception: {str(e)}"
-                    )
-                    results["code_execution_result"]["success"] = False
-                    results["code_execution_result"]["stderr"] = str(e)
-    finally:
-        # Clean up the temporary AI code file
-        if os.path.exists(ai_code_path):
-            os.remove(ai_code_path)
-            results["log"].append(f"Cleaned up AI code file: {ai_code_path}")
+                else:
+                    results["code_execution_result"]["executed"] = True
+                    try:
+                        # ponytail: copy before executing untrusted code so the persisted
+                        # cache tree is never mutated by whatever the code does.
+                        with tempfile.TemporaryDirectory(
+                            prefix="ai_code_venv_"
+                        ) as tmp_dir:
+                            exec_venv_dir = Path(tmp_dir) / "venv"
+                            shutil.copytree(venv_dir, exec_venv_dir)
+                            exec_python_exe = _venv_executable(
+                                exec_venv_dir, "python"
+                            )
+                            results["log"].append(
+                                f"Executing AI code with: {exec_python_exe} {ai_code_path}"
+                            )
+                            exec_proc = subprocess.run(
+                                [exec_python_exe, ai_code_path],
+                                capture_output=True,
+                                text=True,
+                                encoding="utf-8",
+                                timeout=30,  # Added timeout
+                            )
+                        results["code_execution_result"]["success"] = (
+                            exec_proc.returncode == 0
+                        )
+                        results["code_execution_result"]["stdout"] = exec_proc.stdout
+                        results["code_execution_result"]["stderr"] = exec_proc.stderr
+                        results["code_execution_result"]["return_code"] = (
+                            exec_proc.returncode
+                        )
+                        results["log"].append(
+                            f"Code execution finished. Return code: {exec_proc.returncode}"
+                        )
+                    except subprocess.TimeoutExpired:
+                        results["log"].append("Code execution timed out.")
+                        results["code_execution_result"]["success"] = False
+                        results["code_execution_result"]["stderr"] = (
+                            "Execution timed out after 30 seconds."
+                        )
+                    except Exception as e:
+                        results["log"].append(
+                            f"Code execution threw an exception: {str(e)}"
+                        )
+                        results["code_execution_result"]["success"] = False
+                        results["code_execution_result"]["stderr"] = str(e)
+        finally:
+            # Clean up the temporary AI code file
+            if os.path.exists(ai_code_path):
+                os.remove(ai_code_path)
+                results["log"].append(f"Cleaned up AI code file: {ai_code_path}")
 
     return results
