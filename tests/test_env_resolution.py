@@ -78,6 +78,22 @@ def test_get_editable_source_returns_path_when_editable():
         )
 
 
+def test_get_editable_source_unquotes_percent_escaped_path():
+    class FakeDist:
+        def read_text(self, name):
+            return (
+                '{"url": "file:///Users/dev/my%20project", '
+                '"dir_info": {"editable": true}}'
+            )
+
+    with patch(
+        "importlib.metadata.Distribution.from_name", return_value=FakeDist()
+    ):
+        assert get_editable_source(Path(sys.executable)) == Path(
+            "/Users/dev/my project"
+        )
+
+
 if __name__ == "__main__":
     test_resolve_target_python_defaults_to_own_interpreter()
     test_resolve_target_python_honors_env_override()
@@ -86,4 +102,5 @@ if __name__ == "__main__":
     test_resolve_doc_ref_falls_back_to_main()
     test_get_editable_source_returns_none_when_not_editable()
     test_get_editable_source_returns_path_when_editable()
+    test_get_editable_source_unquotes_percent_escaped_path()
     print("ok")

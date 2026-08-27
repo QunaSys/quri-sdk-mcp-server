@@ -14,6 +14,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 TRACKED_PACKAGES = ("quri-sdk", "quri-parts", "quri-algo", "quri-vm")
 
@@ -135,5 +137,5 @@ def get_editable_source(
     is_editable = direct_url.get("dir_info", {}).get("editable", False)
     url = direct_url.get("url", "")
     if is_editable and url.startswith("file://"):
-        return Path(url[len("file://"):])
+        return Path(url2pathname(urlparse(url).path))
     return None
