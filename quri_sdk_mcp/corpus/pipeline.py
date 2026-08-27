@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -137,6 +138,28 @@ async def _fetch_page_text(docname: str) -> str:
     return article.get_text(separator=" ", strip=True)
 
 
+def _write_corpus_cache(
+    cache_path: Path, pages: list[tuple[str, str]], bodies: list[Optional[str]]
+) -> Path:
+    """Writes a fresh corpus SQLite cache file. Blocking; run via to_thread."""
+    fd, tmp_name = tempfile.mkstemp(
+        dir=cache_path.parent, prefix=cache_path.stem + ".", suffix=".tmp"
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    conn = sqlite3.connect(tmp_path)
+    try:
+        db.create_schema(conn)
+        for (docname, title), body in zip(pages, bodies):
+            if body is not None:
+                db.insert_doc(conn, docname, _classify_category(docname), title, body)
+        conn.commit()
+    finally:
+        conn.close()
+    tmp_path.replace(cache_path)
+    return cache_path
+
+
 async def build_remote_corpus() -> Path:
     """Builds (or reuses) the persistent live-site docs corpus cache.
 
@@ -166,28 +189,16 @@ async def build_remote_corpus() -> Path:
 
     bodies = await asyncio.gather(*(_fetch_bounded(docname) for docname, _ in pages))
 
-    fd, tmp_name = tempfile.mkstemp(
-        dir=cache_path.parent, prefix=cache_path.stem + ".", suffix=".tmp"
-    )
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    conn = sqlite3.connect(tmp_path)
-    try:
-        db.create_schema(conn)
-        for (docname, title), body in zip(pages, bodies):
-            if body is not None:
-                db.insert_doc(conn, docname, _classify_category(docname), title, body)
-        conn.commit()
-    finally:
-        conn.close()
-    tmp_path.replace(cache_path)
-    return cache_path
+    return await asyncio.to_thread(_write_corpus_cache, cache_path, pages, bodies)
 
 
 def build_local_corpus(working_directory: Path) -> sqlite3.Connection:
     """Builds an in-memory docs corpus from a local checkout, fresh on every
     call (see module docstring for why this isn't cached)."""
-    conn = sqlite3.connect(":memory:")
+    # check_same_thread=False: this runs inside asyncio.to_thread and hands
+    # the connection back to the caller's (event-loop) thread; usage is
+    # handed off sequentially, never concurrent, so this is safe.
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     db.create_schema(conn)
     for root_name in ("docs", "release-notes"):
         root_dir = working_directory / root_name
@@ -220,16 +231,29 @@ async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
     3. Else, the persistent live-site crawl cache.
     """
     if working_directory is not None:
-        return build_local_corpus(Path(working_directory))
+        return await asyncio.to_thread(build_local_corpus, Path(working_directory))
 
     python = resolve_target_python()
     for package in ("quri-parts", "quri-sdk-enterprise"):
-        editable_source = await asyncio.to_thread(get_editable_source, python, package)
+        try:
+            editable_source = await asyncio.to_thread(
+                get_editable_source, python, package
+            )
+        except (subprocess.CalledProcessError, OSError):
+            continue
         if editable_source is not None and _looks_like_docs_checkout(editable_source):
-            return build_local_corpus(editable_source)
+            return await asyncio.to_thread(build_local_corpus, editable_source)
 
     cache_path = await build_remote_corpus()
-    return sqlite3.connect(cache_path)
+    conn = sqlite3.connect(cache_path)
+    if db.docs_table_is_fts5(conn) != db.FTS5_AVAILABLE:
+        # Cache file was built by a process with different FTS5 support;
+        # rebuild it so this process's schema expectations match reality.
+        conn.close()
+        cache_path.unlink(missing_ok=True)
+        cache_path = await build_remote_corpus()
+        conn = sqlite3.connect(cache_path)
+    return conn
 
 
 async def search(
