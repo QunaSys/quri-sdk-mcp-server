@@ -4,8 +4,10 @@ extraction, search-index parsing, and local-mode building.
 Run directly: `python tests/test_corpus_pipeline.py`.
 """
 
+import asyncio
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from quri_sdk_mcp.corpus import db
 from quri_sdk_mcp.corpus.pipeline import (
@@ -14,6 +16,7 @@ from quri_sdk_mcp.corpus.pipeline import (
     _looks_like_docs_checkout,
     _parse_search_index,
     build_local_corpus,
+    build_remote_corpus,
 )
 
 
@@ -84,6 +87,34 @@ def test_build_local_corpus_indexes_known_folders_only():
             conn.close()
 
 
+def test_concurrent_remote_rebuilds_do_not_collide():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cache_path = Path(tmp_dir) / "docs-corpus.sqlite3"
+
+        async def fake_fetch_page_index():
+            return [("docs/tutorials/foo", "Foo")]
+
+        async def fake_fetch_page_text(docname):
+            return "Foo content"
+
+        async def run_both():
+            return await asyncio.gather(build_remote_corpus(), build_remote_corpus())
+
+        with patch(
+            "quri_sdk_mcp.corpus.pipeline._corpus_cache_path", return_value=cache_path
+        ), patch(
+            "quri_sdk_mcp.corpus.pipeline._fetch_page_index",
+            side_effect=fake_fetch_page_index,
+        ), patch(
+            "quri_sdk_mcp.corpus.pipeline._fetch_page_text",
+            side_effect=fake_fetch_page_text,
+        ):
+            results = asyncio.run(run_both())
+
+        assert all(r == cache_path for r in results)
+        assert cache_path.exists()
+
+
 if __name__ == "__main__":
     test_classify_category_matches_known_roots()
     test_classify_category_returns_none_for_unknown_paths()
@@ -93,4 +124,5 @@ if __name__ == "__main__":
     test_parse_search_index_strips_js_wrapper()
     test_looks_like_docs_checkout()
     test_build_local_corpus_indexes_known_folders_only()
+    test_concurrent_remote_rebuilds_do_not_collide()
     print("ok")

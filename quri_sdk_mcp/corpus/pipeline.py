@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -165,8 +166,11 @@ async def build_remote_corpus() -> Path:
 
     bodies = await asyncio.gather(*(_fetch_bounded(docname) for docname, _ in pages))
 
-    tmp_path = cache_path.with_suffix(".sqlite3.tmp")
-    tmp_path.unlink(missing_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=cache_path.parent, prefix=cache_path.stem + ".", suffix=".tmp"
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
     conn = sqlite3.connect(tmp_path)
     try:
         db.create_schema(conn)
