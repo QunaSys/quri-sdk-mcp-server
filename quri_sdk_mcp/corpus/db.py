@@ -43,6 +43,18 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.execute(_FTS5_SCHEMA if FTS5_AVAILABLE else _FALLBACK_SCHEMA)
 
 
+def docs_table_is_fts5(conn: sqlite3.Connection) -> bool:
+    """Inspects the actual on-disk schema of an existing `docs` table, rather
+    than trusting this process's own `FTS5_AVAILABLE` - a persistent cache
+    file may have been built by a different process/interpreter."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'docs'"
+    ).fetchone()
+    if row is None or row[0] is None:
+        return FTS5_AVAILABLE
+    return "VIRTUAL TABLE" in row[0].upper()
+
+
 def insert_doc(conn: sqlite3.Connection, path: str, category: str, title: str, body: str) -> None:
     """Adds one document to the corpus."""
     conn.execute(
@@ -54,6 +66,11 @@ def insert_doc(conn: sqlite3.Connection, path: str, category: str, title: str, b
 def _sanitize_fts_query(terms: str) -> str:
     """Quotes each token so arbitrary user input can't break FTS5 syntax."""
     return " ".join('"' + token.replace('"', '""') + '"' for token in terms.split())
+
+
+def _escape_like(terms: str) -> str:
+    """Escapes SQL LIKE metacharacters so `terms` is matched literally."""
+    return terms.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def query(
@@ -85,8 +102,11 @@ def query(
         )
         params.append(_sanitize_fts_query(terms))
     else:
-        sql = "SELECT path, category, title, substr(body, 1, 300) AS snippet FROM docs WHERE body LIKE ?"
-        params.append(f"%{terms}%")
+        sql = (
+            "SELECT path, category, title, substr(body, 1, 300) AS snippet "
+            "FROM docs WHERE body LIKE ? ESCAPE '\\'"
+        )
+        params.append(f"%{_escape_like(terms)}%")
 
     if categories:
         sql += f" AND category IN ({','.join('?' for _ in categories)})"
