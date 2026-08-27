@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 from mcp.server.fastmcp.resources.types import HttpResource
 
 from quri_sdk_mcp.env_resolution import (
@@ -6,7 +9,15 @@ from quri_sdk_mcp.env_resolution import (
     resolve_target_python,
 )
 
-_doc_ref = resolve_doc_ref(get_versions(resolve_target_python()))
+try:
+    _doc_ref = resolve_doc_ref(get_versions(resolve_target_python()))
+except (subprocess.CalledProcessError, OSError) as e:
+    print(
+        f"quri-sdk-mcp: failed to resolve target Python's package versions, "
+        f"falling back to 'main': {e}",
+        file=sys.stderr,
+    )
+    _doc_ref = "main"
 
 _quri_algo_algorithm_base = HttpResource(
     uri="qsdk://source/algo/algorithms/base",
