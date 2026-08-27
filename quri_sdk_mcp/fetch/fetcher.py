@@ -24,7 +24,9 @@ except importlib.metadata.PackageNotFoundError:
 
 GITHUB_API_HOST = "api.github.com"
 GITHUB_CACHE_TTL_SECONDS = 15 * 60
-_github_api_cache: dict[str, tuple[float, httpx.Response]] = {}
+GITHUB_CACHE_MAX_ENTRIES = 256
+_GitHubCacheKey = tuple[str, tuple[tuple[str, str], ...]]
+_github_api_cache: dict[_GitHubCacheKey, tuple[float, httpx.Response]] = {}
 
 
 def _is_github_cache_fresh(cached_at: float, now: float) -> bool:
@@ -49,15 +51,16 @@ class Fetcher:
         is_github_api = payload.url.host == GITHUB_API_HOST
 
         if is_github_api:
-            cached = _github_api_cache.get(url)
+            token = os.environ.get("GITHUB_TOKEN")
+            if token and "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {token}"
+
+            cache_key: _GitHubCacheKey = (url, tuple(sorted(headers.items())))
+            cached = _github_api_cache.get(cache_key)
             if cached is not None:
                 cached_at, cached_response = cached
                 if _is_github_cache_fresh(cached_at, time.monotonic()):
                     return cached_response
-
-            token = os.environ.get("GITHUB_TOKEN")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
             try:
@@ -66,7 +69,12 @@ class Fetcher:
                 )  # HttpUrlをstrに変換
                 response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
                 if is_github_api:
-                    _github_api_cache[url] = (time.monotonic(), response)
+                    _github_api_cache[cache_key] = (time.monotonic(), response)
+                    if len(_github_api_cache) > GITHUB_CACHE_MAX_ENTRIES:
+                        now = time.monotonic()
+                        for key, (cached_at, _) in list(_github_api_cache.items()):
+                            if not _is_github_cache_fresh(cached_at, now):
+                                del _github_api_cache[key]
                 return response
             except httpx.HTTPStatusError as e:
                 raise ConnectionError(
