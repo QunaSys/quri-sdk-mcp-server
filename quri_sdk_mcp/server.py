@@ -1,3 +1,5 @@
+import asyncio
+
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.resources import HttpResource
 from quri_sdk_mcp.fetch_tools import tool_from_resource
@@ -131,9 +133,11 @@ def get_mcp_server() -> FastMCP:
             dependencies.append("quri_sdk")
 
         if execute_code_after_check is None:
-            return run_code_in_temporary_venv(code, dependencies)
+            return await asyncio.to_thread(run_code_in_temporary_venv, code, dependencies)
         else:
-            return run_code_in_temporary_venv(code, dependencies, execute_code_after_check)
+            return await asyncio.to_thread(
+                run_code_in_temporary_venv, code, dependencies, execute_code_after_check
+            )
 
     return mcp
 
