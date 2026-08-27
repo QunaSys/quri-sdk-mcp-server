@@ -144,7 +144,7 @@ def get_mcp_server() -> FastMCP:
             return timeout_result(str(e))
 
     @mcp.tool()
-    def lookup_api(symbol: str) -> dict[str, Any]:
+    async def lookup_api(symbol: str) -> dict[str, Any]:
         """Look up the actual signature, docstring, and source location for a
         quri_parts/quri_algo/quri_vm symbol as installed in the user's own
         project. This should be the first stop for any question about a QURI
@@ -167,7 +167,7 @@ def get_mcp_server() -> FastMCP:
             dict: Introspection result with signature, docstring, source
                 location, and (if known) a plus_equivalents list.
         """
-        return lookup_symbol(symbol)
+        return await asyncio.to_thread(lookup_symbol, symbol)
 
     return mcp
 
