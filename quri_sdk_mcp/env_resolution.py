@@ -46,6 +46,17 @@ print(json.dumps(out))
 """
 
 
+def _run_in_python(python: Path, script: str) -> str:
+    """Runs `script` via `python -c` and returns its stdout."""
+    result = subprocess.run(
+        [str(python), "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
 def get_versions(python: Path) -> dict[str, str | None]:
     """Resolves installed versions of the quri-sdk-family packages.
 
@@ -66,13 +77,7 @@ def get_versions(python: Path) -> dict[str, str | None]:
         return versions
 
     script = _VERSION_SCRIPT.format(names=TRACKED_PACKAGES)
-    result = subprocess.run(
-        [str(python), "-c", script],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return json.loads(result.stdout)
+    return json.loads(_run_in_python(python, script))
 
 
 def resolve_doc_ref(versions: dict[str, str | None]) -> str:
@@ -122,13 +127,7 @@ def get_editable_source(
             "if text is not None:\n"
             "    print(text)\n"
         )
-        result = subprocess.run(
-            [str(python), "-c", script],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        direct_url_text = result.stdout or None
+        direct_url_text = _run_in_python(python, script) or None
 
     if not direct_url_text:
         return None
