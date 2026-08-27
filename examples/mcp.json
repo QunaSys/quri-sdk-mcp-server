@@ -9,7 +9,11 @@
         "python",
         "-m",
         "quri_sdk_mcp.server"
-      ]
+      ],
+      "env": {
+        "QURI_SDK_MCP_PYTHON": "/path/to/your/project/.venv/bin/python",
+        "GITHUB_TOKEN": "ghp_..."
+      }
     }
   }
 }

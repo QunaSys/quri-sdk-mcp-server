@@ -5,7 +5,7 @@ This directory contains minimal example files for the QURI SDK MCP Server. It co
 
 ## What's inside
 
-* `mcp.json`: Minimal stdio MCP client configuration using `uv` (matches the "Minimal generic MCP config" in the root README). Replace `/ABSOLUTE/PATH/TO/quri-sdk-mcp-server` with your checkout path.
+* `mcp.json`: Minimal stdio MCP client configuration using `uv` (matches the "Minimal generic MCP config" in the root README). Replace `/ABSOLUTE/PATH/TO/quri-sdk-mcp-server` with your checkout path. The `env` block is optional - see the root README's Environment variables section.
 
 
 ## How to use
@@ -18,10 +18,13 @@ This directory contains minimal example files for the QURI SDK MCP Server. It co
 
 ## Quick smoke test
 
-Use the prompts in the root `README.md`, or try these two to confirm your client is wired up:
+Use the prompts in the root `README.md`'s "Example prompts to try" section, or try these to confirm your client is actually reaching for the new tools (`lookup_api`, `search_docs`/`get_example`, `check_code`) rather than answering from general knowledge:
 
-* "List the available QURI SDK examples"
-* "Show the QURI SDK source code tree"
+* "How do I sample a quantum circuit using Qulacs in QURI Parts? Show me a working example."
+* "Is there a faster or enterprise-grade way to run large-scale qulacs sampling, or do I just use the open source sampler as-is?"
+* "Write QURI Parts code that builds a parametric circuit with one RY rotation, binds a value, and estimates an expectation value. Make sure it actually runs before you show it to me."
+
+These are deliberately natural - none of them name a tool. If your client shows tool-call indicators, you should see it call into `quri-sdk` partway through answering each one.
 
 
 ## More help
