@@ -49,13 +49,14 @@ class Fetcher:
         headers = Fetcher.DEFAULT_HEADERS.copy()
         if payload.headers:
             headers.update(payload.headers)
+        headers = httpx.Headers(headers)
 
         url = str(payload.url)
         is_github_api = payload.url.host == GITHUB_API_HOST
 
         if is_github_api:
             token = os.environ.get("GITHUB_TOKEN")
-            if token and not any(k.lower() == "authorization" for k in headers):
+            if token and "authorization" not in headers:
                 headers["Authorization"] = f"Bearer {token}"
 
             cache_key: _GitHubCacheKey = (url, tuple(sorted(headers.items())))
