@@ -14,8 +14,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable, TypeVar
 from urllib.parse import urlparse
 from urllib.request import url2pathname
+
+_T = TypeVar("_T")
 
 TRACKED_PACKAGES = ("quri-sdk", "quri-parts", "quri-algo", "quri-vm")
 
@@ -57,6 +60,16 @@ def _run_in_python(python: Path, script: str) -> str:
     return result.stdout
 
 
+def _resolve_in_target(
+    python: Path, local: Callable[[], _T], script: str, parse: Callable[[str], _T]
+) -> _T:
+    """Runs `local()` directly if `python` is this interpreter, else runs
+    `script` in the target interpreter and passes its stdout through `parse`."""
+    if python == Path(sys.executable):
+        return local()
+    return parse(_run_in_python(python, script))
+
+
 def get_versions(python: Path) -> dict[str, str | None]:
     """Resolves installed versions of the quri-sdk-family packages.
 
@@ -67,7 +80,8 @@ def get_versions(python: Path) -> dict[str, str | None]:
         Mapping of package name to installed version, or None if not
         installed.
     """
-    if python == Path(sys.executable):
+
+    def local() -> dict[str, str | None]:
         versions: dict[str, str | None] = {}
         for name in TRACKED_PACKAGES:
             try:
@@ -77,7 +91,7 @@ def get_versions(python: Path) -> dict[str, str | None]:
         return versions
 
     script = _VERSION_SCRIPT.format(names=TRACKED_PACKAGES)
-    return json.loads(_run_in_python(python, script))
+    return _resolve_in_target(python, local, script, json.loads)
 
 
 def resolve_doc_ref(versions: dict[str, str | None]) -> str:
@@ -109,25 +123,26 @@ def get_editable_source(
         The local source path if the distribution is an editable, local
         install, else None.
     """
-    if python == Path(sys.executable):
+
+    def local() -> str | None:
         try:
             dist = importlib.metadata.Distribution.from_name(package)
         except importlib.metadata.PackageNotFoundError:
             return None
-        direct_url_text = dist.read_text("direct_url.json")
-    else:
-        script = (
-            "import importlib.metadata, sys\n"
-            "try:\n"
-            "    dist = importlib.metadata.Distribution.from_name(\n"
-            f"        {package!r})\n"
-            "except importlib.metadata.PackageNotFoundError:\n"
-            "    sys.exit(0)\n"
-            "text = dist.read_text('direct_url.json')\n"
-            "if text is not None:\n"
-            "    print(text)\n"
-        )
-        direct_url_text = _run_in_python(python, script) or None
+        return dist.read_text("direct_url.json")
+
+    script = (
+        "import importlib.metadata, sys\n"
+        "try:\n"
+        "    dist = importlib.metadata.Distribution.from_name(\n"
+        f"        {package!r})\n"
+        "except importlib.metadata.PackageNotFoundError:\n"
+        "    sys.exit(0)\n"
+        "text = dist.read_text('direct_url.json')\n"
+        "if text is not None:\n"
+        "    print(text)\n"
+    )
+    direct_url_text = _resolve_in_target(python, local, script, lambda out: out or None)
 
     if not direct_url_text:
         return None
