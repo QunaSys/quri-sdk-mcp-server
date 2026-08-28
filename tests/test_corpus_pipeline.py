@@ -6,6 +6,8 @@ Run directly: `python tests/test_corpus_pipeline.py`.
 
 import asyncio
 import json
+import os
+import sqlite3
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +25,7 @@ from quri_sdk_mcp.corpus.pipeline import (
     build_remote_corpus,
     fetch_example_source,
     get_corpus,
+    search,
 )
 
 
@@ -49,7 +52,7 @@ def test_classify_category_matches_known_roots():
 
 
 def test_classify_category_returns_none_for_unknown_paths():
-    assert _classify_category("docs/api/quri_parts.circuit.rst") is None
+    assert _classify_category("docs/unknown/quri_parts.circuit.rst") is None
     assert _classify_category("README.md") is None
 
 
@@ -108,7 +111,9 @@ def test_build_local_corpus_indexes_known_folders_only():
             assert len(results) == 1
             assert results[0]["category"] == "tutorial"
 
-            assert db.query(conn, "reference") == []
+            reference_results = db.query(conn, "reference")
+            assert len(reference_results) == 1
+            assert reference_results[0]["category"] == "reference"
         finally:
             conn.close()
 
@@ -125,6 +130,29 @@ def test_build_local_corpus_indexes_bare_layout():
             results = db.query(conn, "circuit")
             assert len(results) == 1
             assert results[0]["category"] == "tutorial"
+        finally:
+            conn.close()
+
+
+def test_build_local_corpus_indexes_real_sphinx_source_layout_and_notebooks():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        tutorial_dir = root / "docs" / "source" / "docs" / "tutorials"
+        tutorial_dir.mkdir(parents=True)
+        notebook = {
+            "cells": [
+                {"cell_type": "markdown", "source": ["# Notebook title\n"]},
+                {"cell_type": "code", "source": ["quantum_circuit = object()\n"]},
+            ]
+        }
+        (tutorial_dir / "circuits.ipynb").write_text(json.dumps(notebook))
+
+        conn = build_local_corpus(root)
+        try:
+            results = db.query(conn, "quantum_circuit")
+            assert len(results) == 1
+            assert results[0]["path"] == "docs/tutorials/circuits"
+            assert results[0]["title"] == "Notebook title"
         finally:
             conn.close()
 
@@ -203,6 +231,42 @@ def test_concurrent_remote_rebuilds_do_not_collide():
         assert cache_path.exists()
 
 
+def test_failed_remote_rebuild_preserves_stale_cache():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cache_path = Path(tmp_dir) / "docs-corpus.sqlite3"
+        conn = sqlite3.connect(cache_path)
+        db.create_schema(conn)
+        db.insert_doc(conn, "docs/tutorials/old", "tutorial", "Old", "old content")
+        conn.commit()
+        conn.close()
+        stale_time = 1
+        os.utime(cache_path, (stale_time, stale_time))
+
+        async def fake_fetch_page_index():
+            return [("docs/tutorials/new", "New")]
+
+        async def failed_fetch_page_text(docname):
+            raise ConnectionError(docname)
+
+        with patch(
+            "quri_sdk_mcp.corpus.pipeline._corpus_cache_path", return_value=cache_path
+        ), patch(
+            "quri_sdk_mcp.corpus.pipeline._fetch_page_index",
+            side_effect=fake_fetch_page_index,
+        ), patch(
+            "quri_sdk_mcp.corpus.pipeline._fetch_page_text",
+            side_effect=failed_fetch_page_text,
+        ):
+            result = asyncio.run(build_remote_corpus())
+
+        assert result == cache_path
+        conn = sqlite3.connect(cache_path)
+        try:
+            assert db.query(conn, "old")[0]["title"] == "Old"
+        finally:
+            conn.close()
+
+
 def test_fetch_example_source_prefers_notebook():
     async def fake_fetch(payload):
         assert payload.url.path.endswith(".ipynb")
@@ -224,6 +288,75 @@ def test_fetch_example_source_falls_back_to_markdown_on_404():
         text = asyncio.run(fetch_example_source("docs/howto/some_page"))
 
     assert text == "# A how-to page"
+
+
+def test_fetch_example_source_reads_from_local_result_origin():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        tutorial_dir = root / "docs" / "source" / "docs" / "tutorials"
+        tutorial_dir.mkdir(parents=True)
+        source = '{"cells": [{"source": ["local branch content"]}]}'
+        (tutorial_dir / "circuits.ipynb").write_text(source)
+
+        text = asyncio.run(
+            fetch_example_source(
+                "docs/tutorials/circuits", working_directory=str(root)
+            )
+        )
+
+    assert text == source
+
+
+def test_fetch_example_source_handles_dotted_reference_filenames():
+    # Sphinx autodoc reference pages are commonly named after the dotted
+    # module path itself (e.g. "quri_parts.qulacs.rst"), so the stem alone
+    # contains dots that Path.with_suffix would misparse as an extension.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        api_dir = root / "docs" / "api"
+        api_dir.mkdir(parents=True)
+        source = "quri_parts.qulacs\n==================\n"
+        (api_dir / "quri_parts.qulacs.rst").write_text(source)
+
+        text = asyncio.run(
+            fetch_example_source(
+                "docs/api/quri_parts.qulacs", working_directory=str(root)
+            )
+        )
+
+    assert text == source
+
+
+def test_fetch_example_source_rejects_path_traversal_locally():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        (root / "docs" / "tutorials").mkdir(parents=True)
+
+        for bad_path in ("../../etc/passwd", "/etc/passwd"):
+            try:
+                asyncio.run(
+                    fetch_example_source(bad_path, working_directory=str(root))
+                )
+                assert False, f"expected ValueError for {bad_path!r}"
+            except ValueError:
+                pass
+
+
+def test_local_search_returns_origin_for_exact_source_fetch():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        tutorial_dir = root / "docs" / "source" / "docs" / "tutorials"
+        tutorial_dir.mkdir(parents=True)
+        notebook = {
+            "cells": [{"cell_type": "code", "source": ["branch_specific_token"]}]
+        }
+        (tutorial_dir / "circuits.ipynb").write_text(json.dumps(notebook))
+
+        results = asyncio.run(
+            search("branch_specific_token", working_directory=str(root))
+        )
+
+    assert results[0]["working_directory"] == str(root)
 
 
 def test_fetch_example_source_raises_when_neither_extension_exists():

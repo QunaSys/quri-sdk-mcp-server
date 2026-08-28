@@ -50,7 +50,9 @@ def get_mcp_server() -> FastMCP:
 
     # Utils ----------------------
     @mcp.tool()
-    async def fetch_example_source(path: str) -> FetchResponse:
+    async def fetch_example_source(
+        path: str, working_directory: Optional[str] = None
+    ) -> FetchResponse:
         """Fetches the exact runnable source behind a `search_docs`/
         `get_example` result. Use this once `get_example` has found the
         right tutorial or how-to and you need the precise, cell-accurate
@@ -60,15 +62,17 @@ def get_mcp_server() -> FastMCP:
         Args:
             path (str): The `path` field from a `search_docs`/`get_example`
                 match, e.g. "docs/tutorials/quri-parts/circuits".
+            working_directory (Optional[str]): The `working_directory` field
+                returned with a local search result. Omit for remote results.
 
         Returns:
-            FetchResponse: the raw notebook (`.ipynb` JSON) or markdown
-                source, or an error if neither exists at that path.
+            FetchResponse: the raw notebook (`.ipynb` JSON), Markdown, or RST
+                source, or an error if none exists at that path.
         """
         try:
-            text = await fetch_example_source_corpus(path)
+            text = await fetch_example_source_corpus(path, working_directory)
             return FetchResponse(content=[{"type": "text", "text": text}], isError=False)
-        except ConnectionError as e:
+        except (ConnectionError, ValueError) as e:
             return FetchResponse(content=[], isError=True, errorMessage=str(e))
 
     @mcp.tool()
@@ -160,13 +164,15 @@ def get_mcp_server() -> FastMCP:
                 next to a pyproject.toml naming
                 quri-parts/quri-algo/quri-vm/quri-sdk-enterprise), so
                 results match the exact branch being worked on instead of
-                the deployed site. Usually not needed - this is
+                the deployed site. Local results include this path in their
+                `working_directory` field for `fetch_example_source`. Usually
+                not needed - this is
                 auto-detected from the target interpreter's editable-install
                 metadata when possible.
 
         Returns:
             list[dict]: Matches as {path, category, title, snippet}, best
-                match first.
+                match first. Local matches also include working_directory.
         """
         return await search_docs_corpus(
             query, categories=categories, limit=limit, working_directory=working_directory

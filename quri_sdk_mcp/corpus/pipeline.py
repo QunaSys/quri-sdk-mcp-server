@@ -36,7 +36,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 import httpx
@@ -49,6 +49,7 @@ from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs
 DOCS_SITE = "https://quri-sdk.qunasys.com"
 CORPUS_REBUILD_TTL_SECONDS = 24 * 60 * 60
 CRAWL_CONCURRENCY = 8
+MIN_CRAWL_SUCCESS_RATIO = 0.8
 
 # `search`/`get_example` results carry a Sphinx docname `path` (site-relative,
 # no extension, e.g. "docs/tutorials/quri-parts/circuits") that maps 1:1 onto
@@ -71,6 +72,10 @@ CATEGORY_ROOTS = [
     ("docs/examples", "example"),
     ("docs/concepts", "concept"),
     ("docs/community", "community"),
+    ("docs/api", "reference"),
+    ("docs/quri_parts", "reference"),
+    ("docs/quri_algo", "reference"),
+    ("docs/quri_vm", "reference"),
     ("release-notes", "changelog"),
     ("tutorials", "tutorial"),
     ("examples", "example"),
@@ -107,7 +112,27 @@ def _extract_title(body: str, path: str) -> str:
         stripped = line.strip()
         if stripped.startswith("# "):
             return stripped[2:].strip()
+    lines = text.splitlines()
+    for title, underline in zip(lines, lines[1:]):
+        if title.strip() and re.fullmatch(r"[=\-~^]+", underline.strip()):
+            return title.strip()
     return Path(path).stem
+
+
+def _notebook_text(raw: str) -> str:
+    """Extracts searchable Markdown and code from a notebook JSON document."""
+    notebook = json.loads(raw)
+    chunks = []
+    for cell in notebook.get("cells", []):
+        source = cell.get("source", "")
+        chunks.append("".join(source) if isinstance(source, list) else source)
+    return "\n\n".join(chunks)
+
+
+def _docs_content_root(working_directory: Path) -> Path:
+    """Returns the directory whose children use deployed Sphinx doc paths."""
+    sphinx_source = working_directory / "docs" / "source"
+    return sphinx_source if sphinx_source.is_dir() else working_directory
 
 
 def _corpus_cache_path() -> Path:
@@ -190,7 +215,13 @@ async def build_remote_corpus() -> Path:
         if time.time() - cache_path.stat().st_mtime < CORPUS_REBUILD_TTL_SECONDS:
             return cache_path
 
-    pages = await _fetch_page_index()
+    had_stale_cache = cache_path.exists()
+    try:
+        pages = await _fetch_page_index()
+    except Exception:
+        if had_stale_cache:
+            return cache_path
+        raise
 
     semaphore = asyncio.Semaphore(CRAWL_CONCURRENCY)
 
@@ -205,6 +236,15 @@ async def build_remote_corpus() -> Path:
 
     bodies = await asyncio.gather(*(_fetch_bounded(docname) for docname, _ in pages))
 
+    successful_pages = sum(body is not None for body in bodies)
+    success_ratio = successful_pages / len(pages) if pages else 0.0
+    if success_ratio < MIN_CRAWL_SUCCESS_RATIO:
+        if had_stale_cache:
+            return cache_path
+        raise ConnectionError(
+            f"Documentation crawl fetched only {successful_pages}/{len(pages)} pages"
+        )
+
     return await asyncio.to_thread(_write_corpus_cache, cache_path, pages, bodies)
 
 
@@ -216,23 +256,75 @@ def build_local_corpus(working_directory: Path) -> sqlite3.Connection:
     # handed off sequentially, never concurrent, so this is safe.
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     db.create_schema(conn)
+    content_root = _docs_content_root(working_directory)
+    indexed_paths = set()
     for root_name in _LOCAL_ROOT_DIRS:
-        root_dir = working_directory / root_name
+        root_dir = content_root / root_name
         if not root_dir.is_dir():
             continue
-        for md_path in root_dir.rglob("*.md"):
-            rel_path = md_path.relative_to(working_directory).as_posix()
-            category = _classify_category(rel_path)
-            if category is None:
-                continue
-            body = md_path.read_text(encoding="utf-8", errors="replace")
-            db.insert_doc(conn, rel_path, category, _extract_title(body, rel_path), body)
+        for suffix in (".ipynb", ".md", ".rst"):
+            for source_path in root_dir.rglob(f"*{suffix}"):
+                rel_path = source_path.relative_to(content_root).as_posix()
+                result_path = str(PurePosixPath(rel_path).with_suffix(""))
+                category = _classify_category(rel_path)
+                if category is None or result_path in indexed_paths:
+                    continue
+                raw = source_path.read_text(encoding="utf-8", errors="replace")
+                try:
+                    body = _notebook_text(raw) if suffix == ".ipynb" else raw
+                except json.JSONDecodeError:
+                    continue
+                db.insert_doc(
+                    conn,
+                    result_path,
+                    category,
+                    _extract_title(body, rel_path),
+                    body,
+                )
+                indexed_paths.add(result_path)
     conn.commit()
     return conn
 
 
 def _looks_like_docs_checkout(path: Path) -> bool:
-    return any((path / root_name).is_dir() for root_name in _LOCAL_ROOT_DIRS)
+    content_root = _docs_content_root(path)
+    return any((content_root / root_name).is_dir() for root_name in _LOCAL_ROOT_DIRS)
+
+
+def _find_docs_checkout(path: Path) -> Path | None:
+    """Finds a checkout root at `path` or a nearby monorepo ancestor."""
+    candidates = (path, *list(path.parents)[:3])
+    return next((candidate for candidate in candidates if _looks_like_docs_checkout(candidate)), None)
+
+
+async def _resolve_local_checkout(working_directory: Optional[str]) -> Path | None:
+    if working_directory is not None:
+        return Path(working_directory)
+
+    python = resolve_target_python()
+    for package in ("quri-parts", "quri-sdk-enterprise"):
+        try:
+            editable_source = await asyncio.to_thread(
+                get_editable_source, python, package
+            )
+        except (subprocess.CalledProcessError, OSError, json.JSONDecodeError):
+            continue
+        if editable_source is not None:
+            checkout = _find_docs_checkout(editable_source)
+            if checkout is not None:
+                return checkout
+    return None
+
+
+async def _remote_corpus() -> sqlite3.Connection:
+    cache_path = await build_remote_corpus()
+    conn = sqlite3.connect(cache_path)
+    if db.docs_table_is_fts5(conn) != db.FTS5_AVAILABLE:
+        conn.close()
+        cache_path.unlink(missing_ok=True)
+        cache_path = await build_remote_corpus()
+        conn = sqlite3.connect(cache_path)
+    return conn
 
 
 async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
@@ -246,30 +338,10 @@ async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
        directory next to it) - search that.
     3. Else, the persistent live-site crawl cache.
     """
-    if working_directory is not None:
-        return await asyncio.to_thread(build_local_corpus, Path(working_directory))
-
-    python = resolve_target_python()
-    for package in ("quri-parts", "quri-sdk-enterprise"):
-        try:
-            editable_source = await asyncio.to_thread(
-                get_editable_source, python, package
-            )
-        except (subprocess.CalledProcessError, OSError, json.JSONDecodeError):
-            continue
-        if editable_source is not None and _looks_like_docs_checkout(editable_source):
-            return await asyncio.to_thread(build_local_corpus, editable_source)
-
-    cache_path = await build_remote_corpus()
-    conn = sqlite3.connect(cache_path)
-    if db.docs_table_is_fts5(conn) != db.FTS5_AVAILABLE:
-        # Cache file was built by a process with different FTS5 support;
-        # rebuild it so this process's schema expectations match reality.
-        conn.close()
-        cache_path.unlink(missing_ok=True)
-        cache_path = await build_remote_corpus()
-        conn = sqlite3.connect(cache_path)
-    return conn
+    local_checkout = await _resolve_local_checkout(working_directory)
+    if local_checkout is not None:
+        return await asyncio.to_thread(build_local_corpus, local_checkout)
+    return await _remote_corpus()
 
 
 async def search(
@@ -279,14 +351,45 @@ async def search(
     working_directory: Optional[str] = None,
 ) -> list[dict[str, str]]:
     """Resolves a corpus (see `get_corpus`) and searches it."""
-    conn = await get_corpus(working_directory)
+    local_checkout = await _resolve_local_checkout(working_directory)
+    if local_checkout is not None:
+        conn = await asyncio.to_thread(build_local_corpus, local_checkout)
+    else:
+        conn = await _remote_corpus()
     try:
-        return db.query(conn, query, categories=categories, limit=limit)
+        results = db.query(conn, query, categories=categories, limit=limit)
+        if local_checkout is not None:
+            for result in results:
+                result["working_directory"] = str(local_checkout)
+        return results
     finally:
         conn.close()
 
 
-async def fetch_example_source(path: str) -> str:
+def _fetch_local_source(path: str, working_directory: Path) -> str:
+    content_root = _docs_content_root(working_directory).resolve()
+    relative_path = PurePosixPath(path)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ValueError("Example path must stay within the documentation checkout")
+    base_path = content_root.joinpath(*relative_path.parts)
+    known_extensions = (*_EXAMPLE_SOURCE_EXTENSIONS, ".rst")
+    candidates = (
+        (base_path,)
+        if base_path.name.endswith(known_extensions)
+        else tuple(base_path.parent / (base_path.name + ext) for ext in known_extensions)
+    )
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not resolved.is_relative_to(content_root):
+            raise ValueError("Example path must stay within the documentation checkout")
+        if resolved.is_file():
+            return resolved.read_text(encoding="utf-8", errors="replace")
+    raise ConnectionError(f"No local notebook or documentation source found for {path!r}")
+
+
+async def fetch_example_source(
+    path: str, working_directory: Optional[str] = None
+) -> str:
     """Fetches the raw source behind a `search`/`get_example` result's
     `path`, notebook first, falling back to markdown for pages that aren't
     notebook-authored.
@@ -296,15 +399,23 @@ async def fetch_example_source(path: str) -> str:
             "docs/tutorials/quri-parts/circuits".
 
     Returns:
-        The raw file text (`.ipynb` JSON or markdown), verbatim.
+        The raw file text (`.ipynb` JSON, Markdown, or RST), verbatim.
 
     Raises:
         ConnectionError: if neither extension exists at `path`, or the
             request otherwise fails.
     """
+    local_checkout = await _resolve_local_checkout(working_directory)
+    if local_checkout is not None:
+        return await asyncio.to_thread(_fetch_local_source, path, local_checkout)
+
+    relative_path = PurePosixPath(path)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ValueError("Example path must stay within the documentation source tree")
+    path_without_suffix = str(relative_path.with_suffix(""))
     last_error: Optional[ConnectionError] = None
     for suffix in _EXAMPLE_SOURCE_EXTENSIONS:
-        url = f"{_EXAMPLE_SOURCE_BASE}/{path}{suffix}"
+        url = f"{_EXAMPLE_SOURCE_BASE}/{path_without_suffix}{suffix}"
         try:
             response = await Fetcher._fetch(FetchRequestArgs(url=url))
             return response.text

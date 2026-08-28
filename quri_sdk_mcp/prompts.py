@@ -23,7 +23,7 @@ The following are recommended workflows for handling user requests using the abo
 ## User requests a tutorial on a certain topic
 1. Use the get_example tool with the requested topic as the query
 2. If it finds no good match, instead do preparation action a. and b. and browse the table of contents for the most relevant tutorial or example
-3. If you need the exact runnable code (not just the searched text), use the fetch_example_source tool with the match's path
+3. If you need the exact runnable code (not just the searched text), use the fetch_example_source tool with the match's path and, when present, its working_directory
 4. Return the contents to the user
 
 ## User asks you to explain how a certain feature works
