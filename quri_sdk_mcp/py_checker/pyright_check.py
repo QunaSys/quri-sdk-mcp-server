@@ -97,30 +97,19 @@ def _is_venv_fresh(marker_path: Path) -> bool:
     return time.time() - data["created_at"] <= VENV_FRESHNESS_TTL_DAYS * 86400
 
 
-def create_pyrightconfig(venv_path: Path) -> Path:
+def create_pyrightconfig(venv_path: Path) -> tuple[Path, dict]:
     """
     Create a pyrightconfig.json file for the given virtual environment.
-    
+
     Args:
         venv_path: Path to the virtual environment directory
-        output_dir: Directory where the config file should be created
-        
+
     Returns:
-        Path to the created pyrightconfig.json file
+        The created pyrightconfig.json path and its contents.
     """
-    # Get the venv name and parent directory
-    venv_name = venv_path.name
-    venv_parent = venv_path.parent
-    
-    # Determine the Python executable path based on OS
-    python_path = _venv_executable(venv_path, "python")
-    
-    # Create the configuration
     config = {
-        "venv": venv_name,
-        "venvPath": str(venv_parent),
         "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
-        "pythonPath": python_path,
+        "pythonPath": _venv_executable(venv_path, "python"),
         "typeCheckingMode": "basic",
         "useLibraryCodeForTypes": True,
         "reportMissingImports": True,
@@ -131,13 +120,12 @@ def create_pyrightconfig(venv_path: Path) -> Path:
             }
         ]
     }
-    
-    # Write the config file
+
     config_path = venv_path / "pyrightconfig.json"
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
-    
-    return config_path
+
+    return config_path, config
 
 # This is the core Pyright checking logic adapted from our previous conversation.
 # It will be called by the main function to check code using a specific Pyright executable.
@@ -354,15 +342,14 @@ def run_code_in_temporary_venv(
                     text=True,
                     encoding="utf-8",
                 )
-                pyright_config_path = create_pyrightconfig(venv_dir)
+                _, pyright_config = create_pyrightconfig(venv_dir)
                 results["dependencies_installed"] = True
                 results["log"].append(
                     f"Packages installed successfully:\n{install_proc.stdout}"
                 )
-                with open(pyright_config_path, "r") as f:
-                    results["log"].append(
-                        f"Pyright configured as {f.read()}"
-                    )
+                results["log"].append(
+                    f"Pyright configured as {json.dumps(pyright_config, indent=2)}"
+                )
                 marker_path.write_text(json.dumps({"created_at": time.time()}))
             except subprocess.CalledProcessError as e:
                 results["log"].append(
