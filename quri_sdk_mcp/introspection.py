@@ -54,13 +54,28 @@ def lookup_symbol(symbol: str) -> dict[str, Any]:
         installed).
     """
     python = resolve_target_python()
-    process = subprocess.run(
-        [str(python), str(_INTROSPECTION_SCRIPT), symbol],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    info = json.loads(process.stdout)
+    try:
+        process = subprocess.run(
+            [str(python), str(_INTROSPECTION_SCRIPT), symbol],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        info = json.loads(process.stdout)
+    except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as e:
+        return {
+            "symbol": symbol,
+            "module": None,
+            "qualname": None,
+            "signature": None,
+            "docstring": None,
+            "source_file": None,
+            "source_line": None,
+            "kind": None,
+            "source": None,
+            "error": f"Failed to introspect via {python}: {e}",
+            "plus_namespaces": {},
+        }
 
     plus_entries = load_plus_mapping().get(symbol)
     if plus_entries:
