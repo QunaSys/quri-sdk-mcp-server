@@ -1,5 +1,4 @@
 import httpx
-from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
 from collections import OrderedDict
 import importlib.metadata
@@ -134,30 +133,6 @@ class Fetcher:
                 content=[],
                 isError=True,
                 errorMessage=f"Failed to decode JSON from {payload.url}: {e}",
-            )
-        except Exception as e:
-            return FetchResponse(content=[], isError=True, errorMessage=str(e))
-
-    @staticmethod
-    async def txt(payload: FetchRequestArgs) -> FetchResponse:
-        """Fetches content and returns plain text."""
-        try:
-            response = await Fetcher._fetch(payload)
-            html_content = (
-                await response.aread()
-            )  # Read as bytes for bs4 encoding detection
-            # BeautifulSoup can often detect encoding better
-            soup = BeautifulSoup(html_content, "lxml")  # Use lxml parser
-
-            # Remove script and style elements
-            for element in soup(["script", "style"]):
-                element.decompose()
-
-            text = soup.get_text(separator=" ", strip=True)
-            # Normalize whitespace
-            # normalized_text = ' '.join(text.split())
-            return FetchResponse(
-                content=[{"type": "text", "text": text}], isError=False
             )
         except Exception as e:
             return FetchResponse(content=[], isError=True, errorMessage=str(e))
