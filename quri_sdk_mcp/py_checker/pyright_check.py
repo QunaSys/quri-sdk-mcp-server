@@ -42,6 +42,8 @@ def _prune_stale_venvs(cache_root: Path) -> None:
         return
     cutoff = time.time() - VENV_PRUNE_TTL_DAYS * 86400
     for venv_dir in cache_root.iterdir():
+        if (cache_root / f"{venv_dir.name}.lock").exists():
+            continue  # another call is currently building/using this venv
         marker = venv_dir / ".ready"
         if marker.exists() and marker.stat().st_mtime < cutoff:
             shutil.rmtree(venv_dir, ignore_errors=True)
@@ -252,6 +254,33 @@ def _run_pyright_on_file(
     return check_result
 
 
+def _empty_result() -> dict[str, Any]:
+    """The all-steps-pending shape returned by `run_code_in_temporary_venv`,
+    also used for a timeout result raised before any step could run."""
+    return {
+        "venv_path": None,
+        "venv_created": False,
+        "dependencies_installed": False,
+        "pyright_check_result": None,
+        "code_execution_result": {
+            "executed": False,
+            "success": None,
+            "stdout": None,
+            "stderr": None,
+            "return_code": None,
+        },
+        "log": [],  # Overall log of operations
+    }
+
+
+def timeout_result(message: str) -> dict[str, Any]:
+    """Builds a `run_code_in_temporary_venv`-shaped result for a caller that
+    caught the `TimeoutError` `_venv_lock` can raise."""
+    result = _empty_result()
+    result["log"].append(message)
+    return result
+
+
 def run_code_in_temporary_venv(
     ai_code_string: str,
     dependencies: list[str],
@@ -269,20 +298,7 @@ def run_code_in_temporary_venv(
     Returns:
         dict: A dictionary containing results from each step.
     """
-    results = {
-        "venv_path": None,
-        "venv_created": False,
-        "dependencies_installed": False,
-        "pyright_check_result": None,
-        "code_execution_result": {
-            "executed": False,
-            "success": None,
-            "stdout": None,
-            "stderr": None,
-            "return_code": None,
-        },
-        "log": [],  # Overall log of operations
-    }
+    results = _empty_result()
 
     cache_root = _venv_cache_root()
     _prune_stale_venvs(cache_root)
