@@ -138,11 +138,17 @@ def _inspect_live(obj) -> dict:
         except (TypeError, OSError):
             source_line = None
 
+    try:
+        source_text = inspect.getsource(obj)
+    except (TypeError, OSError):
+        source_text = None
+
     return {
         "signature": signature,
         "docstring": inspect.getdoc(obj),
         "source_file": source_file,
         "source_line": source_line,
+        "source_text": source_text,
         "kind": _kind_of(obj),
     }
 
@@ -236,6 +242,7 @@ def _pyi_stub_lookup(module_name: str, remaining_attrs: list[str]) -> dict | Non
             "docstring": ast.get_docstring(tree, clean=True),
             "source_file": str(pyi_path),
             "source_line": None,
+            "source_text": None,
             "kind": "module",
         }
 
@@ -249,6 +256,9 @@ def _pyi_stub_lookup(module_name: str, remaining_attrs: list[str]) -> dict | Non
         "docstring": ast.get_docstring(node, clean=True),
         "source_file": str(pyi_path),
         "source_line": node.lineno,
+        # No real Python body to return for compiled code, a .pyi stub only
+        # has declarations, not the implementation.
+        "source_text": None,
         "kind": kind,
     }
 
@@ -263,6 +273,7 @@ def introspect_symbol(symbol: str) -> dict:
         "docstring": None,
         "source_file": None,
         "source_line": None,
+        "source_text": None,
         "kind": None,
         "source": None,
         "error": None,

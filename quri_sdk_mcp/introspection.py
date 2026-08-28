@@ -47,11 +47,11 @@ def lookup_symbol(symbol: str) -> dict[str, Any]:
             "quri_parts.circuit.QuantumCircuit".
 
     Returns:
-        Introspection result (signature, docstring, source location). If one
-        or more `.plus` upgrades are known for this symbol, includes a
-        `plus_equivalents` list, each entry annotated with `available`
-        (whether the target interpreter actually has that `.plus` namespace
-        installed).
+        Introspection result (signature, docstring, source location and
+        text). If one or more `.plus` upgrades are known for this symbol,
+        includes a `plus_equivalents` list, each entry annotated with
+        `available` (whether the target interpreter actually has that
+        `.plus` namespace installed).
     """
     python = resolve_target_python()
     try:
@@ -71,6 +71,7 @@ def lookup_symbol(symbol: str) -> dict[str, Any]:
             "docstring": None,
             "source_file": None,
             "source_line": None,
+            "source_text": None,
             "kind": None,
             "source": None,
             "error": f"Failed to introspect via {python}: {e}",

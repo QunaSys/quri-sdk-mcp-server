@@ -130,6 +130,27 @@ def test_introspect_symbol_backfills_docstring_from_pyi_on_partial_success():
     assert result["source"] == "inspect"
     assert result["signature"] is not None
     assert result["docstring"] == "A documented Foo."
+    assert result["source_text"] == (
+        "class Foo:\n"
+        "    def __init__(self, x: int) -> None:\n"
+        "        pass\n"
+    )
+
+
+def test_pyi_stub_lookup_has_no_source_text():
+    # A .pyi stub only has declarations, not an implementation - lookup_api
+    # must report that honestly rather than returning the stub text itself.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        so_path = Path(tmp_dir) / "_compiled.cpython-310-darwin.so"
+        pyi_path = so_path.with_suffix(".pyi")
+        pyi_path.write_text(_PYI_STUB)
+
+        fake_spec = SimpleNamespace(origin=str(so_path))
+        with patch("importlib.util.find_spec", return_value=fake_spec):
+            result = _pyi_stub_lookup("fake_module", ["Sampler", "sample"])
+
+    assert result is not None
+    assert result["source_text"] is None
 
 
 if __name__ == "__main__":
@@ -140,4 +161,5 @@ if __name__ == "__main__":
     test_pyi_stub_lookup_parses_signature_and_docstring()
     test_pyi_path_for_module_walks_up_to_a_resolvable_ancestor()
     test_introspect_symbol_backfills_docstring_from_pyi_on_partial_success()
+    test_pyi_stub_lookup_has_no_source_text()
     print("ok")
