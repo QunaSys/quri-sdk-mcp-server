@@ -64,7 +64,15 @@ CATEGORY_ROOTS = [
     ("docs/concepts", "concept"),
     ("docs/community", "community"),
     ("release-notes", "changelog"),
+    ("tutorials", "tutorial"),
+    ("examples", "example"),
+    ("community", "community"),
 ]
+
+# Top-level dirs a local working_directory is walked for, covering both the
+# live site's "docs/{category}" layout and the docs-repo/quri-sdk-enterprise
+# checkout's bare top-level layout described above.
+_LOCAL_ROOT_DIRS = ("docs", "release-notes", "tutorials", "examples", "community")
 
 
 def _classify_category(path: str) -> Optional[str]:
@@ -200,7 +208,7 @@ def build_local_corpus(working_directory: Path) -> sqlite3.Connection:
     # handed off sequentially, never concurrent, so this is safe.
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     db.create_schema(conn)
-    for root_name in ("docs", "release-notes"):
+    for root_name in _LOCAL_ROOT_DIRS:
         root_dir = working_directory / root_name
         if not root_dir.is_dir():
             continue
@@ -216,7 +224,7 @@ def build_local_corpus(working_directory: Path) -> sqlite3.Connection:
 
 
 def _looks_like_docs_checkout(path: Path) -> bool:
-    return (path / "docs").is_dir() or (path / "release-notes").is_dir()
+    return any((path / root_name).is_dir() for root_name in _LOCAL_ROOT_DIRS)
 
 
 async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
@@ -239,7 +247,7 @@ async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
             editable_source = await asyncio.to_thread(
                 get_editable_source, python, package
             )
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.CalledProcessError, OSError, json.JSONDecodeError):
             continue
         if editable_source is not None and _looks_like_docs_checkout(editable_source):
             return await asyncio.to_thread(build_local_corpus, editable_source)

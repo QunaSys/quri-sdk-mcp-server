@@ -5,6 +5,7 @@ Run directly: `python tests/test_corpus_pipeline.py`.
 """
 
 import asyncio
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -66,6 +67,14 @@ def test_looks_like_docs_checkout():
         assert _looks_like_docs_checkout(root)
 
 
+def test_looks_like_docs_checkout_bare_layout():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        assert not _looks_like_docs_checkout(root)
+        (root / "tutorials").mkdir()
+        assert _looks_like_docs_checkout(root)
+
+
 def test_build_local_corpus_indexes_known_folders_only():
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
@@ -88,6 +97,22 @@ def test_build_local_corpus_indexes_known_folders_only():
             conn.close()
 
 
+def test_build_local_corpus_indexes_bare_layout():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        tutorial_dir = root / "tutorials" / "circuits"
+        tutorial_dir.mkdir(parents=True)
+        (tutorial_dir / "index.md").write_text("# Circuits\n\nBuilding a quantum circuit.")
+
+        conn = build_local_corpus(root)
+        try:
+            results = db.query(conn, "circuit")
+            assert len(results) == 1
+            assert results[0]["category"] == "tutorial"
+        finally:
+            conn.close()
+
+
 def test_get_corpus_falls_back_to_enterprise_checkout():
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
@@ -97,6 +122,30 @@ def test_get_corpus_falls_back_to_enterprise_checkout():
 
         def fake_get_editable_source(python, package="quri-parts"):
             return root if package == "quri-sdk-enterprise" else None
+
+        with patch(
+            "quri_sdk_mcp.corpus.pipeline.get_editable_source",
+            side_effect=fake_get_editable_source,
+        ):
+            conn = asyncio.run(get_corpus(None))
+        try:
+            results = db.query(conn, "Enterprise")
+            assert len(results) == 1
+        finally:
+            conn.close()
+
+
+def test_get_corpus_survives_malformed_editable_source_metadata():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        tutorial_dir = root / "docs" / "tutorials" / "circuits"
+        tutorial_dir.mkdir(parents=True)
+        (tutorial_dir / "index.md").write_text("# Circuits\n\nEnterprise-only content.")
+
+        def fake_get_editable_source(python, package="quri-parts"):
+            if package == "quri-parts":
+                raise json.JSONDecodeError("bad direct_url.json", "", 0)
+            return root
 
         with patch(
             "quri_sdk_mcp.corpus.pipeline.get_editable_source",
@@ -146,7 +195,10 @@ if __name__ == "__main__":
     test_extract_title_falls_back_to_filename()
     test_parse_search_index_strips_js_wrapper()
     test_looks_like_docs_checkout()
+    test_looks_like_docs_checkout_bare_layout()
     test_build_local_corpus_indexes_known_folders_only()
+    test_build_local_corpus_indexes_bare_layout()
     test_get_corpus_falls_back_to_enterprise_checkout()
+    test_get_corpus_survives_malformed_editable_source_metadata()
     test_concurrent_remote_rebuilds_do_not_collide()
     print("ok")
