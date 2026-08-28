@@ -52,7 +52,7 @@ class Fetcher:
 
         if is_github_api:
             token = os.environ.get("GITHUB_TOKEN")
-            if token and "Authorization" not in headers:
+            if token and not any(k.lower() == "authorization" for k in headers):
                 headers["Authorization"] = f"Bearer {token}"
 
             cache_key: _GitHubCacheKey = (url, tuple(sorted(headers.items())))
