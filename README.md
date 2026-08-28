@@ -11,13 +11,11 @@ This repo uses UV for package management.
 
 | Tool | Purpose |
 | --- | --- |
-| `lookup_api` | Looks up the actual signature, docstring, and source location for a `quri_parts`/`quri_algo`/`quri_vm` symbol, introspected from the interpreter your project actually uses. Also flags known Enterprise `.plus` upgrades. |
+| `lookup_api` | Looks up the actual signature, docstring, source location, and source code for a `quri_parts`/`quri_algo`/`quri_vm` symbol, introspected from the interpreter your project actually uses. Also flags known Enterprise `.plus` upgrades. |
 | `search_docs` | Lexical (keyword) search over QURI SDK documentation - tutorials, how-to guides, reference pages, and release notes. |
 | `get_example` | `search_docs` pre-restricted to tutorial and how-to content, for "show me an example" style requests. |
+| `fetch_example_source` | Fetches the exact runnable source (notebook or markdown) behind a `search_docs`/`get_example` result. |
 | `check_code` | Creates a temporary virtual environment, type-checks generated code with Pyright, and optionally executes it. |
-| `fetch_as_markdown` | Fetches a URL and converts its HTML content to Markdown. |
-| `fetch_raw_python` | Fetches a raw file (e.g. Python source) from the quri-sdk repository. |
-| `fetch_raw_python_notebook` | Fetches a raw Jupyter notebook from the quri-sdk repository. |
 
 A handful of additional tools (e.g. `quri_sdk_start`, `tutorial_start`,
 `quri_sdk_source_code_tree`) wrap individual hardcoded documentation/source
