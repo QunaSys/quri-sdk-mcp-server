@@ -82,7 +82,7 @@ This installs a `quri-sdk-mcp` command on `PATH`, which you can point an MCP cli
 | `search_docs` | Lexical (keyword) search over QURI SDK documentation - tutorials, how-to guides, reference pages, and release notes. |
 | `get_example` | `search_docs` pre-restricted to tutorial and how-to content, for "show me an example" style requests. |
 | `fetch_example_source` | Fetches the exact runnable source (notebook or markdown) behind a `search_docs`/`get_example` result. |
-| `check_code` | Creates a temporary virtual environment, type-checks generated code with Pyright, and optionally executes it. |
+| `check_code` | Creates a cached validation environment with the selected project interpreter, type-checks generated code against its installed packages with Pyright, and optionally executes it. |
 
 A handful of additional tools (e.g. `quri_sdk_start`, `tutorial_start`, `quri_sdk_source_code_tree`) wrap individual hardcoded documentation/source resources - see `quri_sdk_mcp/markdown_resources.py`, `quri_sdk_mcp/text_resources.py`, and `quri_sdk_mcp/python_source_code_resources.py`.
 
@@ -91,7 +91,7 @@ A handful of additional tools (e.g. `quri_sdk_start`, `tutorial_start`, `quri_sd
 
 | Variable | Purpose |
 | --- | --- |
-| `QURI_SDK_MCP_PYTHON` | Path to the Python interpreter of the project you're assisting with. `lookup_api`, `search_docs`, and `get_example` introspect and resolve versions against this interpreter so results match what's actually installed. Falls back to this server's own interpreter (which bundles the OSS `quri-sdk` install) if unset. |
+| `QURI_SDK_MCP_PYTHON` | Path to the Python interpreter of the project you're assisting with. `lookup_api`, `search_docs`, `get_example`, and `check_code` use this interpreter and its installed packages so results match the project. Falls back to this server's own interpreter (which bundles the OSS `quri-sdk` install) if unset. |
 | `GITHUB_TOKEN` | A GitHub token used to authenticate `api.github.com` requests (source-tree listings, etc.), raising the otherwise low unauthenticated rate limit. Optional - tools that use it still work unauthenticated, just with a lower rate limit. |
 
 Both variables are optional - omit them to use this server's own bundled interpreter and an unauthenticated (lower rate limit) GitHub client.
@@ -111,11 +111,7 @@ If you installed via `pip install .`:
 {
   "mcpServers": {
     "quri-sdk": {
-      "command": "quri-sdk-mcp",
-      "env": {
-        "QURI_SDK_MCP_PYTHON": "/path/to/your/project/.venv/bin/python",
-        "GITHUB_TOKEN": "ghp_..."
-      }
+      "command": "quri-sdk-mcp"
     }
   }
 }
@@ -135,17 +131,14 @@ If you're running from a clone instead, via `uv`:
         "python",
         "-m",
         "quri_sdk_mcp.server"
-      ],
-      "env": {
-        "QURI_SDK_MCP_PYTHON": "/path/to/your/project/.venv/bin/python",
-        "GITHUB_TOKEN": "ghp_..."
-      }
+      ]
     }
   }
 }
 ```
 
 Replace `/ABSOLUTE/PATH/TO/quri-sdk-mcp-server` with the actual path to the repository.
+Add an `env` object only when you have real values to supply, as described in [Environment variables](#environment-variables).
 
 Restart Claude Desktop after updating the config.
 
@@ -161,11 +154,7 @@ Restart Claude Desktop after updating the config.
         "bash",
         "-lc",
         "cd /path/to/quri-sdk-mcp-server && uv run python -m quri_sdk_mcp.server"
-      ],
-      "env": {
-        "QURI_SDK_MCP_PYTHON": "/path/to/your/project/.venv/bin/python",
-        "GITHUB_TOKEN": "ghp_..."
-      }
+      ]
     }
   }
 }
@@ -229,7 +218,7 @@ If a client is running non-interactively (e.g. headless/scripted), it can't answ
 
 Some tools fetch content from:
 
-* [https://docs.qunasys.com](https://docs.qunasys.com)
+* [https://quri-sdk.qunasys.com](https://quri-sdk.qunasys.com)
 * [https://github.com/QunaSys](https://github.com/QunaSys)
 
 If you are behind a corporate proxy or custom SSL setup, ensure outbound HTTPS access is allowed.
@@ -237,6 +226,6 @@ If you are behind a corporate proxy or custom SSL setup, ensure outbound HTTPS a
 
 ## Development notes
 
-* The server is intentionally **stateless** and communicates via stdio
+* The server communicates via stdio and keeps local caches for documentation, GitHub responses, and validation environments
 * Core functionality lives in `quri_sdk_mcp/`
 * Adding a new hardcoded documentation/source resource (the `markdown_resources.py`/`text_resources.py`/`python_source_code_resources.py` pattern) needs no runtime changes; extending `search_docs`'s corpus or `lookup_api`'s introspection does involve code changes in `quri_sdk_mcp/corpus/` and `quri_sdk_mcp/introspection.py` respectively

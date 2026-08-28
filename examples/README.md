@@ -6,7 +6,7 @@ It complements (does not duplicate) the root `README.md`, so finish the Quicksta
 
 ## What's inside
 
-* `mcp.json`: Minimal stdio MCP client configuration using `uv` (matches the "Minimal generic MCP config" in the root README). Replace `/ABSOLUTE/PATH/TO/quri-sdk-mcp-server` with your checkout path. The `env` block is optional - see the root README's Environment variables section.
+* `mcp.json`: Minimal stdio MCP client configuration using `uv` (matches the "Minimal generic MCP config" in the root README). Replace `/ABSOLUTE/PATH/TO/quri-sdk-mcp-server` with your checkout path. See the root README's Environment variables section if you want to select a project interpreter or authenticate GitHub requests.
 
 
 ## How to use
