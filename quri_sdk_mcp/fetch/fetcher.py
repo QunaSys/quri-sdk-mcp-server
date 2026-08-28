@@ -70,11 +70,12 @@ class Fetcher:
                 response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
                 if is_github_api:
                     _github_api_cache[cache_key] = (time.monotonic(), response)
-                    if len(_github_api_cache) > GITHUB_CACHE_MAX_ENTRIES:
-                        now = time.monotonic()
-                        for key, (cached_at, _) in list(_github_api_cache.items()):
-                            if not _is_github_cache_fresh(cached_at, now):
-                                del _github_api_cache[key]
+                    overflow = len(_github_api_cache) - GITHUB_CACHE_MAX_ENTRIES
+                    if overflow > 0:
+                        # dicts preserve insertion order and entries are never
+                        # re-inserted on a cache hit, so this evicts oldest-first.
+                        for key in list(_github_api_cache)[:overflow]:
+                            del _github_api_cache[key]
                 return response
             except httpx.HTTPStatusError as e:
                 raise ConnectionError(
