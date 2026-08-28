@@ -7,7 +7,7 @@ from quri_sdk_mcp.markdown_resources import all_markdown_resources
 from quri_sdk_mcp.python_source_code_resources import all_python_source_code_resources
 from quri_sdk_mcp.text_resources import all_text_resources
 from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs, FetchResponse
-from quri_sdk_mcp.py_checker import run_code_in_temporary_venv
+from quri_sdk_mcp.py_checker import run_code_in_temporary_venv, timeout_result
 from typing import Optional, Any
 
 
@@ -132,12 +132,15 @@ def get_mcp_server() -> FastMCP:
         if not "quri_sdk" in dependencies:
             dependencies.append("quri_sdk")
 
-        if execute_code_after_check is None:
-            return await asyncio.to_thread(run_code_in_temporary_venv, code, dependencies)
-        else:
-            return await asyncio.to_thread(
-                run_code_in_temporary_venv, code, dependencies, execute_code_after_check
-            )
+        try:
+            if execute_code_after_check is None:
+                return await asyncio.to_thread(run_code_in_temporary_venv, code, dependencies)
+            else:
+                return await asyncio.to_thread(
+                    run_code_in_temporary_venv, code, dependencies, execute_code_after_check
+                )
+        except TimeoutError as e:
+            return timeout_result(str(e))
 
     return mcp
 
