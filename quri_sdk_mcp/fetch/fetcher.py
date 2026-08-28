@@ -1,6 +1,7 @@
 import httpx
 from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
+from collections import OrderedDict
 import importlib.metadata
 import json
 import os
@@ -26,7 +27,9 @@ GITHUB_API_HOST = "api.github.com"
 GITHUB_CACHE_TTL_SECONDS = 15 * 60
 GITHUB_CACHE_MAX_ENTRIES = 256
 _GitHubCacheKey = tuple[str, tuple[tuple[str, str], ...]]
-_github_api_cache: dict[_GitHubCacheKey, tuple[float, httpx.Response]] = {}
+_github_api_cache: OrderedDict[_GitHubCacheKey, tuple[float, httpx.Response]] = (
+    OrderedDict()
+)
 
 
 def _is_github_cache_fresh(cached_at: float, now: float) -> bool:
@@ -70,12 +73,9 @@ class Fetcher:
                 response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
                 if is_github_api:
                     _github_api_cache[cache_key] = (time.monotonic(), response)
-                    overflow = len(_github_api_cache) - GITHUB_CACHE_MAX_ENTRIES
-                    if overflow > 0:
-                        # dicts preserve insertion order and entries are never
-                        # re-inserted on a cache hit, so this evicts oldest-first.
-                        for key in list(_github_api_cache)[:overflow]:
-                            del _github_api_cache[key]
+                    _github_api_cache.move_to_end(cache_key)
+                    while len(_github_api_cache) > GITHUB_CACHE_MAX_ENTRIES:
+                        _github_api_cache.popitem(last=False)
                 return response
             except httpx.HTTPStatusError as e:
                 raise ConnectionError(
