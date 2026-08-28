@@ -8,7 +8,10 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import httpx
 
 from quri_sdk_mcp.corpus import db
 from quri_sdk_mcp.corpus.pipeline import (
@@ -18,8 +21,21 @@ from quri_sdk_mcp.corpus.pipeline import (
     _parse_search_index,
     build_local_corpus,
     build_remote_corpus,
+    fetch_example_source,
     get_corpus,
 )
+
+
+def _not_found(url: str) -> ConnectionError:
+    """Builds a ConnectionError shaped like the one Fetcher._fetch raises on
+    a 404, __cause__ included, since fetch_example_source inspects it to
+    decide whether to try the next extension."""
+    cause = httpx.HTTPStatusError(
+        "404", request=SimpleNamespace(), response=SimpleNamespace(status_code=404)
+    )
+    error = ConnectionError(f"HTTP error: 404 for url: {url}")
+    error.__cause__ = cause
+    return error
 
 
 def test_classify_category_matches_known_roots():
@@ -187,6 +203,41 @@ def test_concurrent_remote_rebuilds_do_not_collide():
         assert cache_path.exists()
 
 
+def test_fetch_example_source_prefers_notebook():
+    async def fake_fetch(payload):
+        assert payload.url.path.endswith(".ipynb")
+        return SimpleNamespace(text='{"cells": []}')
+
+    with patch("quri_sdk_mcp.corpus.pipeline.Fetcher._fetch", side_effect=fake_fetch):
+        text = asyncio.run(fetch_example_source("docs/tutorials/quri-parts/circuits"))
+
+    assert text == '{"cells": []}'
+
+
+def test_fetch_example_source_falls_back_to_markdown_on_404():
+    async def fake_fetch(payload):
+        if payload.url.path.endswith(".ipynb"):
+            raise _not_found(str(payload.url))
+        return SimpleNamespace(text="# A how-to page")
+
+    with patch("quri_sdk_mcp.corpus.pipeline.Fetcher._fetch", side_effect=fake_fetch):
+        text = asyncio.run(fetch_example_source("docs/howto/some_page"))
+
+    assert text == "# A how-to page"
+
+
+def test_fetch_example_source_raises_when_neither_extension_exists():
+    async def fake_fetch(payload):
+        raise _not_found(str(payload.url))
+
+    with patch("quri_sdk_mcp.corpus.pipeline.Fetcher._fetch", side_effect=fake_fetch):
+        try:
+            asyncio.run(fetch_example_source("docs/does/not/exist"))
+            assert False, "expected ConnectionError"
+        except ConnectionError:
+            pass
+
+
 if __name__ == "__main__":
     test_classify_category_matches_known_roots()
     test_classify_category_returns_none_for_unknown_paths()
@@ -201,4 +252,7 @@ if __name__ == "__main__":
     test_get_corpus_falls_back_to_enterprise_checkout()
     test_get_corpus_survives_malformed_editable_source_metadata()
     test_concurrent_remote_rebuilds_do_not_collide()
+    test_fetch_example_source_prefers_notebook()
+    test_fetch_example_source_falls_back_to_markdown_on_404()
+    test_fetch_example_source_raises_when_neither_extension_exists()
     print("ok")

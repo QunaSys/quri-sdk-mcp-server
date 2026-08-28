@@ -6,8 +6,11 @@ from quri_sdk_mcp.fetch_tools import tool_from_resource
 from quri_sdk_mcp.markdown_resources import all_markdown_resources
 from quri_sdk_mcp.python_source_code_resources import all_python_source_code_resources
 from quri_sdk_mcp.text_resources import all_text_resources
-from quri_sdk_mcp.corpus import search as search_docs_corpus
-from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs, FetchResponse
+from quri_sdk_mcp.corpus import (
+    fetch_example_source as fetch_example_source_corpus,
+    search as search_docs_corpus,
+)
+from quri_sdk_mcp.fetch import FetchResponse
 from quri_sdk_mcp.introspection import lookup_symbol
 from quri_sdk_mcp.py_checker import run_code_in_temporary_venv, timeout_result
 from typing import Optional, Any
@@ -47,48 +50,26 @@ def get_mcp_server() -> FastMCP:
 
     # Utils ----------------------
     @mcp.tool()
-    async def fetch_as_markdown(
-        url: str, headers: Optional[dict[str, str]] = None
-    ) -> FetchResponse:
-        """Fetch a website, convert its HTML content to Markdown, and return it. This
-        tool should be used to fetch tutorials and example codes from the quri-sdk
-        documentation site. Use this when the user requests to see a tutorial or example
-        code, or use it when you need to learn how to do something using one of the
-        tutorials or examples.
+    async def fetch_example_source(path: str) -> FetchResponse:
+        """Fetches the exact runnable source behind a `search_docs`/
+        `get_example` result. Use this once `get_example` has found the
+        right tutorial or how-to and you need the precise, cell-accurate
+        code to run or adapt - the rendered/searched text loses things like
+        exact cell boundaries and image outputs that the raw notebook keeps.
 
         Args:
-            url (str): URL of the website to fetch.
-            headers (Optional[dict[str, str]]): Custom headers for the request.
+            path (str): The `path` field from a `search_docs`/`get_example`
+                match, e.g. "docs/tutorials/quri-parts/circuits".
 
         Returns:
-            FetchResponse: An object containing the Markdown content or an error message.
-                        On success, isError is false and content contains the Markdown text.
-                        On failure, isError is true and errorMessage contains the error details.
+            FetchResponse: the raw notebook (`.ipynb` JSON) or markdown
+                source, or an error if neither exists at that path.
         """
-        args = FetchRequestArgs(url=url, headers=headers)
-        return await Fetcher.markdown(args)
-
-    @mcp.tool()
-    async def fetch_raw_python_notebook(
-        url: str, headers: Optional[dict[str, str]] = None
-    ) -> FetchResponse:
-        """This function should be used to fetch files directly from the quri- sdk
-        repository. Use this to fetch python notebooks when needed. If you are unsure
-        what to fetch, try first fetching the repository file-tree using one of the
-        other tools.
-
-        Args:
-            url (str): URL of the website to fetch.
-            headers (Optional[dict[str, str]]): Custom headers for the request.
-
-        Returns:
-            FetchResponse: An object containing the requested content or an error message.
-                        On success, isError is false and content contains the Markdown text.
-                        On failure, isError is true and errorMessage contains the error details.
-        """
-
-        args = FetchRequestArgs(url=url, headers=headers)
-        return await Fetcher.json(args)
+        try:
+            text = await fetch_example_source_corpus(path)
+            return FetchResponse(content=[{"type": "text", "text": text}], isError=False)
+        except ConnectionError as e:
+            return FetchResponse(content=[], isError=True, errorMessage=str(e))
 
     @mcp.tool()
     async def check_code(

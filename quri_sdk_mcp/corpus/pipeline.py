@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import httpx
 from bs4 import BeautifulSoup
 
 from quri_sdk_mcp.corpus import db
@@ -48,6 +49,13 @@ from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs
 DOCS_SITE = "https://quri-sdk.qunasys.com"
 CORPUS_REBUILD_TTL_SECONDS = 24 * 60 * 60
 CRAWL_CONCURRENCY = 8
+
+# `search`/`get_example` results carry a Sphinx docname `path` (site-relative,
+# no extension, e.g. "docs/tutorials/quri-parts/circuits") that maps 1:1 onto
+# this source tree per docs/source/_toc.yml. Tried in this order since
+# tutorial/how-to pages are increasingly notebook-authored.
+_EXAMPLE_SOURCE_BASE = "https://raw.githubusercontent.com/QunaSys/quri-sdk/main/docs/source"
+_EXAMPLE_SOURCE_EXTENSIONS = (".ipynb", ".md")
 
 # Path-prefix -> category, most-specific-first, shared by both corpus modes.
 # Covers both layouts actually observed: the live site's current
@@ -276,3 +284,35 @@ async def search(
         return db.query(conn, query, categories=categories, limit=limit)
     finally:
         conn.close()
+
+
+async def fetch_example_source(path: str) -> str:
+    """Fetches the raw source behind a `search`/`get_example` result's
+    `path`, notebook first, falling back to markdown for pages that aren't
+    notebook-authored.
+
+    Args:
+        path: A `path` value as returned by `search`/`get_example`, e.g.
+            "docs/tutorials/quri-parts/circuits".
+
+    Returns:
+        The raw file text (`.ipynb` JSON or markdown), verbatim.
+
+    Raises:
+        ConnectionError: if neither extension exists at `path`, or the
+            request otherwise fails.
+    """
+    last_error: Optional[ConnectionError] = None
+    for suffix in _EXAMPLE_SOURCE_EXTENSIONS:
+        url = f"{_EXAMPLE_SOURCE_BASE}/{path}{suffix}"
+        try:
+            response = await Fetcher._fetch(FetchRequestArgs(url=url))
+            return response.text
+        except ConnectionError as e:
+            cause = e.__cause__
+            if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 404:
+                last_error = e
+                continue
+            raise
+    assert last_error is not None
+    raise last_error
