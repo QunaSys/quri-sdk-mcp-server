@@ -3,7 +3,13 @@
 Run directly: `python tests/test_venv_cache_key.py`.
 """
 
-from quri_sdk_mcp.py_checker.pyright_check import _venv_cache_key
+import sys
+from pathlib import Path
+
+from quri_sdk_mcp.py_checker.pyright_check import (
+    _target_python_environment,
+    _venv_cache_key,
+)
 
 
 def test_dependency_order_does_not_change_key():
@@ -16,6 +22,13 @@ def test_different_dependencies_change_key():
 
 def test_different_python_version_changes_key():
     assert _venv_cache_key(["a"], "3.13") != _venv_cache_key(["a"], "3.12")
+
+
+def test_target_python_environment_reports_selected_interpreter_paths():
+    version, import_paths = _target_python_environment(Path(sys.executable))
+
+    assert version == f"{sys.version_info.major}.{sys.version_info.minor}"
+    assert any("site-packages" in path for path in import_paths)
 
 
 if __name__ == "__main__":

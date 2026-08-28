@@ -43,7 +43,7 @@ def test_get_versions_reports_none_for_missing_package():
 
 def test_resolve_doc_ref_prefers_quri_parts():
     versions = {"quri-sdk": None, "quri-parts": "17.4.0", "quri-algo": "0.3.0"}
-    assert resolve_doc_ref(versions) == "17.4.0"
+    assert resolve_doc_ref(versions) == "v17.4.0"
 
 
 def test_resolve_doc_ref_falls_back_to_main():

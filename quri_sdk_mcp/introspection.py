@@ -50,13 +50,15 @@ def lookup_symbol(symbol: str) -> dict[str, Any]:
         Introspection result (signature, docstring, source location and
         text). If one or more `.plus` upgrades are known for this symbol,
         includes a `plus_equivalents` list, each entry annotated with
-        `available` (whether the target interpreter actually has that
-        `.plus` namespace installed).
+        `available` (whether the target interpreter contains that exact
+        mapped `.plus` symbol).
     """
     python = resolve_target_python()
+    plus_entries = load_plus_mapping().get(symbol, [])
+    plus_symbols = [entry["plus_symbol"] for entry in plus_entries]
     try:
         process = subprocess.run(
-            [str(python), str(_INTROSPECTION_SCRIPT), symbol],
+            [str(python), str(_INTROSPECTION_SCRIPT), symbol, *plus_symbols],
             capture_output=True,
             text=True,
             check=True,
@@ -76,13 +78,16 @@ def lookup_symbol(symbol: str) -> dict[str, Any]:
             "source": None,
             "error": f"Failed to introspect via {python}: {e}",
             "plus_namespaces": {},
+            "plus_symbols": {},
         }
 
-    plus_entries = load_plus_mapping().get(symbol)
     if plus_entries:
-        installed_namespaces = info.get("plus_namespaces", {})
+        available_symbols = info.get("plus_symbols", {})
         info["plus_equivalents"] = [
-            {**entry, "available": installed_namespaces.get(entry["plus_namespace"], False)}
+            {
+                **entry,
+                "available": available_symbols.get(entry["plus_symbol"], False),
+            }
             for entry in plus_entries
         ]
     return info

@@ -101,12 +101,12 @@ def resolve_doc_ref(versions: dict[str, str | None]) -> str:
         versions: Output of `get_versions`.
 
     Returns:
-        The `quri-parts` version if resolved (since `quri-sdk` itself is
+        The `quri-parts` release tag if resolved (since `quri-sdk` itself is
         meaningless), else `"main"`.
     """
     quri_parts_version = versions.get("quri-parts")
     if quri_parts_version:
-        return quri_parts_version
+        return f"v{quri_parts_version}"
     return "main"
 
 

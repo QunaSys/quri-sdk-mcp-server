@@ -97,19 +97,18 @@ def get_mcp_server() -> FastMCP:
     ) -> dict[str, Any]:
         """This function should be used to check the code produced by a LLM. The code
         is passed directly as python executable string - note this does not support
-        notebooks! This function creates a virtual environment for code evaluation. It
-        first checks that the code would run. Then it checks that the typing
-        information provided makes sense. It then optionally runs the code.
+        notebooks! This function creates a validation environment with the Python
+        selected by QURI_SDK_MCP_PYTHON and exposes that interpreter's installed
+        packages to Pyright and optional execution. Explicit additional dependencies
+        are installed only in the cached validation environment.
 
         Args:
             code (str): The python code in a single string.
-            dependencies: Additional dependencies to include in the virtual environment besides quri-sdk
-            execuyte_code_after_check: Whether to execute the code directly in the virtual environment to see if it runs according to expectations
+            dependencies: Additional dependencies to install in the validation environment.
+            execute_code_after_check: Whether to execute the code directly in the validation environment to see if it runs according to expectations.
         """
         if dependencies is None:
             dependencies = []
-        if not "quri_sdk" in dependencies:
-            dependencies.append("quri_sdk")
 
         try:
             if execute_code_after_check is None:
