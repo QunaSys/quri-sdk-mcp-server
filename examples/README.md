@@ -1,6 +1,7 @@
 # Examples
 
-This directory contains minimal example files for the QURI SDK MCP Server. It complements (does not duplicate) the root `README.md`, so finish the Quickstart there first.
+This directory contains minimal example files for the QURI SDK MCP Server.
+It complements (does not duplicate) the root `README.md`, so finish the Quickstart there first.
 
 
 ## What's inside

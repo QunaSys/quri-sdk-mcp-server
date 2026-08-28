@@ -1,6 +1,7 @@
 # QURI SDK MCP Server
 
-This repository provides an MCP (Model Context Protocol) server that helps LLM-based coding tools generate QURI SDK code correctly: it looks up real, version-correct API signatures, searches QURI SDK documentation, fetches example code, and validates generated code before it's shown to you. It's designed to be used with MCP-compatible clients such as Claude Desktop, Claude Code, and Cursor.
+This repository provides an MCP (Model Context Protocol) server that helps LLM-based coding tools generate QURI SDK code correctly: it looks up real, version-correct API signatures, searches QURI SDK documentation, fetches example code, and validates generated code before it's shown to you.
+It's designed to be used with MCP-compatible clients such as Claude Desktop, Claude Code, and Cursor.
 
 This repo uses UV for package management.
 
@@ -29,7 +30,8 @@ cd quri-sdk-mcp-server
 uv sync
 ```
 
-This creates a virtual environment and installs all required dependencies. If you'd rather install this as a regular package instead of running from a clone, see [Installation](#installation) below.
+This creates a virtual environment and installs all required dependencies.
+If you'd rather install this as a regular package instead of running from a clone, see [Installation](#installation) below.
 
 
 ### 3. Run the MCP server
@@ -94,14 +96,16 @@ A handful of additional tools (e.g. `quri_sdk_start`, `tutorial_start`, `quri_sd
 
 Both variables are optional - omit them to use this server's own bundled interpreter and an unauthenticated (lower rate limit) GitHub client.
 
-Note: `quri-sdk` on PyPI is an empty meta-package (it exists only to pull in the real, separately-versioned `quri_parts`/`quri_algo`/`quri_vm` packages as dependencies) - `importlib.metadata.version("quri-sdk")` will resolve, but the package itself has no code. This is why version resolution (`quri_sdk_mcp/env_resolution.py`) checks `quri-parts`'s version rather than `quri-sdk`'s.
+Note: `quri-sdk` on PyPI is an empty meta-package (it exists only to pull in the real, separately-versioned `quri_parts`/`quri_algo`/`quri_vm` packages as dependencies) - `importlib.metadata.version("quri-sdk")` will resolve, but the package itself has no code.
+This is why version resolution (`quri_sdk_mcp/env_resolution.py`) checks `quri-parts`'s version rather than `quri-sdk`'s.
 
 
 ## Using with MCP Clients
 
 ### Claude Desktop (macOS / Windows)
 
-Add the following entry to your Claude Desktop MCP configuration file. If you installed via `pip install .`:
+Add the following entry to your Claude Desktop MCP configuration file.
+If you installed via `pip install .`:
 
 ```json
 {
@@ -218,7 +222,8 @@ Checklist:
 
 ### Tool calls seem to hang or get skipped
 
-Some MCP clients require you to approve a tool call the first time it's used in a session (a permission prompt). If a client is running non-interactively (e.g. headless/scripted), it can't answer that prompt, and the call will be skipped rather than executed.
+Some MCP clients require you to approve a tool call the first time it's used in a session (a permission prompt).
+If a client is running non-interactively (e.g. headless/scripted), it can't answer that prompt, and the call will be skipped rather than executed.
 
 ### Network or SSL errors
 
