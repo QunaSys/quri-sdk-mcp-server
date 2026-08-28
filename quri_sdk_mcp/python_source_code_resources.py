@@ -10,6 +10,7 @@ from quri_sdk_mcp.env_resolution import (
     resolve_doc_ref,
     resolve_target_python,
 )
+from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs
 
 try:
     _doc_ref = resolve_doc_ref(get_versions(resolve_target_python()))
@@ -36,17 +37,20 @@ _MAIN_TREE_URL = "https://api.github.com/repos/QunaSys/quri-sdk/git/trees/main?r
 
 class _SourceTreeResource(HttpResource):
     """HttpResource for the quri-sdk tree, falling back to `main` if `_doc_ref`
-    (e.g. an editable/dev version string) isn't an actual git ref."""
+    (e.g. an editable/dev version string) isn't an actual git ref. Reads go
+    through Fetcher so this GitHub API host gets the same GITHUB_TOKEN auth
+    and response caching as every other GitHub call (fetcher.py)."""
 
     async def read(self) -> str | bytes:
         try:
-            return await super().read()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404 and self.url != _MAIN_TREE_URL:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(_MAIN_TREE_URL)
-                    response.raise_for_status()
-                    return response.text
+            response = await Fetcher._fetch(FetchRequestArgs(url=self.url))
+            return response.text
+        except ConnectionError as e:
+            cause = e.__cause__
+            is_404 = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 404
+            if is_404 and self.url != _MAIN_TREE_URL:
+                response = await Fetcher._fetch(FetchRequestArgs(url=_MAIN_TREE_URL))
+                return response.text
             raise
 
 
