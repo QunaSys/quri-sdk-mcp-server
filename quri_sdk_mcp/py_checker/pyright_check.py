@@ -92,12 +92,12 @@ def _is_venv_fresh(marker_path: Path) -> bool:
         data = json.loads(marker_path.read_text())
     except (OSError, json.JSONDecodeError):
         return False
-    if "created_at" not in data:
+    if not data or "created_at" not in data:
         return False
     return time.time() - data["created_at"] <= VENV_FRESHNESS_TTL_DAYS * 86400
 
 
-def create_pyrightconfig(venv_path: Path) -> tuple[Path, dict]:
+def create_pyrightconfig(venv_path: Path) -> dict:
     """
     Create a pyrightconfig.json file for the given virtual environment.
 
@@ -105,11 +105,12 @@ def create_pyrightconfig(venv_path: Path) -> tuple[Path, dict]:
         venv_path: Path to the virtual environment directory
 
     Returns:
-        The created pyrightconfig.json path and its contents.
+        The created pyrightconfig.json's contents.
     """
     config = {
         "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
-        "pythonPath": _venv_executable(venv_path, "python"),
+        "venvPath": str(venv_path.parent),
+        "venv": venv_path.name,
         "typeCheckingMode": "basic",
         "useLibraryCodeForTypes": True,
         "reportMissingImports": True,
@@ -125,7 +126,7 @@ def create_pyrightconfig(venv_path: Path) -> tuple[Path, dict]:
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
 
-    return config_path, config
+    return config
 
 # This is the core Pyright checking logic adapted from our previous conversation.
 # It will be called by the main function to check code using a specific Pyright executable.
@@ -342,7 +343,7 @@ def run_code_in_temporary_venv(
                     text=True,
                     encoding="utf-8",
                 )
-                _, pyright_config = create_pyrightconfig(venv_dir)
+                pyright_config = create_pyrightconfig(venv_dir)
                 results["dependencies_installed"] = True
                 results["log"].append(
                     f"Packages installed successfully:\n{install_proc.stdout}"
