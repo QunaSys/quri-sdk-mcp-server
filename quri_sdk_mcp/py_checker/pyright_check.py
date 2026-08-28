@@ -86,18 +86,13 @@ def _venv_lock(cache_root: Path, cache_key: str):
         shutil.rmtree(lock_dir, ignore_errors=True)
 
 
-def _venv_marker_data(marker_path: Path) -> dict | None:
-    """Reads the venv marker's JSON payload, or None if missing/unreadable."""
-    try:
-        return json.loads(marker_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
 def _is_venv_fresh(marker_path: Path) -> bool:
     """Whether a cached venv was created within VENV_FRESHNESS_TTL_DAYS."""
-    data = _venv_marker_data(marker_path)
-    if not data or "created_at" not in data:
+    try:
+        data = json.loads(marker_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    if "created_at" not in data:
         return False
     return time.time() - data["created_at"] <= VENV_FRESHNESS_TTL_DAYS * 86400
 
