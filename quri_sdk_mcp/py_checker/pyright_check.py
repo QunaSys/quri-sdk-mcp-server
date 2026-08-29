@@ -8,7 +8,6 @@ import os
 import random
 import shutil
 import sys
-import re
 import time
 import json
 from pathlib import Path
@@ -128,15 +127,16 @@ def create_pyrightconfig(venv_path: Path) -> dict:
 
     return config
 
-# This is the core Pyright checking logic adapted from our previous conversation.
-# It will be called by the main function to check code using a specific Pyright executable.
 def _run_pyright_on_file(
     code_file_to_check: str, pyright_executable_in_venv: str, project_dir: str
 ) -> dict:
-    """Runs Pyright on a specified file using a specific Pyright executable.
+    """Runs Pyright (via its `--outputjson` mode) on a specified file.
 
-    Parses the output to extract errors and determine success. File paths in the output
-    are replaced with a placeholder.
+    Success/failure and per-diagnostic messages come straight from Pyright's
+    own structured output, not from parsing its human-readable text - that
+    output's exact wording isn't a stable contract, its JSON schema is. File
+    paths in the reconstructed `output` summary are replaced with a
+    placeholder.
     """
     check_result = {"success": False, "output": "", "errors": []}
     # Placeholder to display instead of temporary file paths
@@ -145,81 +145,40 @@ def _run_pyright_on_file(
 
     try:
         process = subprocess.run(
-            [pyright_executable_in_venv, "-p", project_dir, code_file_to_check],
+            [pyright_executable_in_venv, "-p", project_dir, "--outputjson", code_file_to_check],
             capture_output=True,
             text=True,
             encoding="utf-8",
         )
-        raw_output = process.stdout + process.stderr
+        try:
+            data = json.loads(process.stdout)
+        except json.JSONDecodeError:
+            raw_output = (process.stdout + process.stderr).replace(
+                code_file_to_check, file_placeholder
+            )
+            check_result["output"] = raw_output.strip()
+            check_result["errors"] = [f"Could not parse Pyright output: {raw_output.strip()}"]
+            return check_result
 
-        # Success/failure determination (based on Pyright's summary line)
-        num_errors = -1
-        summary_patterns = [
-            re.compile(
-                r"(\d+)\s*error[s]?,\s*(\d+)\s*warning[s]?,\s*(\d+)\s*information[s]?",
-                re.IGNORECASE,
-            ),
-            re.compile(r"found\s*(\d+)\s*error[s]?", re.IGNORECASE),
-            re.compile(r"no\s*error[s]?\s*found", re.IGNORECASE),
+        diagnostics = data.get("generalDiagnostics", [])
+        summary = data.get("summary", {})
+        check_result["success"] = summary.get("errorCount", 0) == 0
+        check_result["errors"] = [
+            d["message"] for d in diagnostics if d.get("severity") == "error"
         ]
-
-        for pattern in summary_patterns:
-            match = pattern.search(raw_output)
-            if match:
-                if pattern.pattern == summary_patterns[0].pattern:
-                    num_errors = int(match.group(1))
-                    break
-                elif pattern.pattern == summary_patterns[1].pattern:
-                    num_errors = int(match.group(1))
-                    break
-                elif pattern.pattern == summary_patterns[2].pattern:
-                    num_errors = 0
-                    break
-
-        if num_errors == 0:
-            check_result["success"] = True
-        elif num_errors > 0:
-            check_result["success"] = False
-        else:
-            if process.returncode == 0 and not "error" in raw_output.lower():
-                check_result["success"] = True
-            elif process.returncode != 0:
-                check_result["success"] = False
-            else:
-                check_result["success"] = False
-
-        # Clean Pyright output by replacing the temporary file path
-        cleaned_output_lines = []
-        for line in raw_output.splitlines():
-            cleaned_line = line.replace(code_file_to_check, file_placeholder)
-            cleaned_output_lines.append(cleaned_line)
-        check_result["output"] = "\n".join(cleaned_output_lines).strip()
-
-        # Extract pure error messages
-        parsed_errors = []
-        for line in raw_output.splitlines():  # Parse from raw_output
-            marker = " - error: "
-            marker_index = line.lower().find(marker)
-            if marker_index != -1:
-                message_body = line[marker_index + len(marker) :].strip()
-                message_body = re.sub(
-                    r"\s*\([a-zA-Z0-9_-]+\)$",
-                    "",
-                    message_body,  # Remove trailing (ruleName)
-                ).strip()
-                parsed_errors.append(message_body)
-            elif (
-                ": error: " in line.lower() and code_file_to_check in line
-            ):  # Handle other formats if they contain the specific file
-                try:
-                    _prefix_part, msg_body = line.split(" error: ", 1)
-                    msg_body = re.sub(
-                        r"\s*\([a-zA-Z0-9_-]+\)$", "", msg_body.strip()
-                    ).strip()
-                    parsed_errors.append(msg_body)
-                except ValueError:
-                    pass  # Could not split, ignore this line for error parsing
-        check_result["errors"] = parsed_errors
+        check_result["output"] = "\n".join(
+            [
+                f"{file_placeholder}:{d['range']['start']['line'] + 1}"
+                f":{d['range']['start']['character'] + 1} - {d['severity']}: {d['message']}"
+                + (f" ({d['rule']})" if d.get("rule") else "")
+                for d in diagnostics
+            ]
+            + [
+                f"{summary.get('errorCount', 0)} errors, "
+                f"{summary.get('warningCount', 0)} warnings, "
+                f"{summary.get('informationCount', 0)} informations"
+            ]
+        )
 
     except FileNotFoundError:
         check_result["output"] = (
