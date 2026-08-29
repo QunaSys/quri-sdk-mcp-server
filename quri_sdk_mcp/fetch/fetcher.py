@@ -64,6 +64,7 @@ class Fetcher:
             if cached is not None:
                 cached_at, cached_response = cached
                 if _is_github_cache_fresh(cached_at, time.monotonic()):
+                    _github_api_cache.move_to_end(cache_key)
                     return cached_response
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
