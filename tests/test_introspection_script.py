@@ -14,8 +14,8 @@ from unittest.mock import patch
 from quri_sdk_mcp.introspection_script import (
     _check_symbols,
     _find_ast_node,
+    _pyi_docstring,
     _pyi_path_for_module,
-    _pyi_stub_lookup,
     _resolve_module_path,
     introspect_symbol,
 )
@@ -71,36 +71,50 @@ def test_check_symbols_checks_exact_symbol_instead_of_parent_namespace():
     assert availability == {"json.dumps": True, "json.does_not_exist": False}
 
 
-def test_check_symbols_does_not_import_compiled_parent(tmp_path):
-    mpi_dir = tmp_path / "fake_sdk" / "plus" / "qulacs" / "mpi"
-    mpi_dir.mkdir(parents=True)
-    extension_suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
-    (mpi_dir.parent / f"__init__{extension_suffix}").write_bytes(b"")
-    (mpi_dir.parent / "__init__.pyi").write_text("")
-    (mpi_dir / f"__init__{extension_suffix}").write_bytes(b"")
-    (mpi_dir / "__init__.pyi").write_text(
-        "from ._backend import MPI_BACKEND as MPI_BACKEND\n"
+def test_check_symbols_trusts_a_successful_import(tmp_path):
+    # A licensed Enterprise install is expected to import cleanly, so
+    # availability is now checked by actually importing (see
+    # _check_symbols's docstring) rather than avoiding it - this reuses the
+    # same live-resolution path as the main lookup.
+    package_dir = tmp_path / "fake_plus"
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text("MPI_BACKEND = object()\n")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        importlib.invalidate_caches()
+        availability = _check_symbols(
+            ["fake_plus.MPI_BACKEND", "fake_plus.MISSING"]
+        )
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("fake_plus", None)
+
+    assert availability == {
+        "fake_plus.MPI_BACKEND": True,
+        "fake_plus.MISSING": False,
+    }
+
+
+def test_check_symbols_reports_unavailable_on_import_failure(tmp_path):
+    # An installed-but-unlicensed .plus package (or any other import-time
+    # failure) must report unavailable, not a false positive from a
+    # directory-existence check.
+    package_dir = tmp_path / "fake_gated"
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text(
+        "raise ImportError('LicenseError: no license file found')\n"
     )
 
     sys.path.insert(0, str(tmp_path))
     try:
-        with patch(
-            "importlib.util.find_spec",
-            side_effect=AssertionError("compiled parent must not be imported"),
-        ):
-            availability = _check_symbols(
-                [
-                    "fake_sdk.plus.qulacs.mpi.MPI_BACKEND",
-                    "fake_sdk.plus.qulacs.mpi.MISSING",
-                ]
-            )
+        importlib.invalidate_caches()
+        availability = _check_symbols(["fake_gated.SOMETHING"])
     finally:
         sys.path.remove(str(tmp_path))
+        sys.modules.pop("fake_gated", None)
 
-    assert availability == {
-        "fake_sdk.plus.qulacs.mpi.MPI_BACKEND": True,
-        "fake_sdk.plus.qulacs.mpi.MISSING": False,
-    }
+    assert availability == {"fake_gated.SOMETHING": False}
 
 
 def test_find_ast_node_locates_top_level_function():
@@ -121,7 +135,13 @@ def test_find_ast_node_locates_nested_method():
     assert node.name == "sample"
 
 
-def test_pyi_stub_lookup_parses_signature_and_docstring():
+def test_pyi_docstring_extracts_nested_method_docstring():
+    # _pyi_docstring is only ever used to backfill a docstring for an object
+    # that already imported successfully, via its own true defining module
+    # (see _pyi_lookup_target) - so it no longer parses signatures or
+    # follows re-exports, both removed once the "answer without importing"
+    # fallback was cut (a trusted, licensed install is expected to import
+    # cleanly; see introspect_symbol's docstring).
     with tempfile.TemporaryDirectory() as tmp_dir:
         so_path = Path(tmp_dir) / f"_compiled{importlib.machinery.EXTENSION_SUFFIXES[0]}"
         pyi_path = Path(tmp_dir) / "_compiled.pyi"
@@ -129,62 +149,24 @@ def test_pyi_stub_lookup_parses_signature_and_docstring():
 
         fake_spec = SimpleNamespace(origin=str(so_path))
         with patch("importlib.util.find_spec", return_value=fake_spec):
-            result = _pyi_stub_lookup("fake_module", ["Sampler", "sample"])
+            docstring = _pyi_docstring("fake_module", ["Sampler", "sample"])
 
-    assert result is not None
-    assert result["signature"] == "def sample(self, circuit: object) -> dict[int, int]"
-    assert result["docstring"] == "Runs sampling and returns counts."
-    assert result["kind"] == "function"
+    assert docstring == "Runs sampling and returns counts."
 
 
-def test_pyi_stub_lookup_parses_compiled_class_constructor_signature():
+def test_pyi_docstring_is_none_for_a_plain_variable():
     with tempfile.TemporaryDirectory() as tmp_dir:
         so_path = Path(tmp_dir) / f"_compiled{importlib.machinery.EXTENSION_SUFFIXES[0]}"
         pyi_path = Path(tmp_dir) / "_compiled.pyi"
-        pyi_path.write_text(_PYI_STUB)
+        pyi_path.write_text("MPI_BACKEND: object\n")
 
         fake_spec = SimpleNamespace(origin=str(so_path))
         with patch("importlib.util.find_spec", return_value=fake_spec):
-            result = _pyi_stub_lookup("fake_module", ["Sampler"])
+            docstring = _pyi_docstring("fake_module", ["MPI_BACKEND"])
 
-    assert result is not None
-    assert result["signature"] == "(shots: int)"
-    assert result["kind"] == "class"
-
-
-def test_pyi_stub_lookup_follows_package_variable_reexport(tmp_path):
-    package_dir = tmp_path / "fake_plus"
-    package_dir.mkdir()
-    extension_suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
-    init_extension = package_dir / f"__init__{extension_suffix}"
-    backend_extension = package_dir / f"_backend{extension_suffix}"
-    init_extension.write_bytes(b"")
-    backend_extension.write_bytes(b"")
-    (package_dir / "__init__.pyi").write_text(
-        "from ._backend import MPI_BACKEND as MPI_BACKEND\n"
-    )
-    (package_dir / "_backend.pyi").write_text("MPI_BACKEND: object\n")
-
-    def find_spec(name):
-        if name == "fake_plus":
-            return SimpleNamespace(
-                origin=str(init_extension),
-                submodule_search_locations=[str(package_dir)],
-            )
-        if name == "fake_plus._backend":
-            return SimpleNamespace(
-                origin=str(backend_extension),
-                submodule_search_locations=None,
-            )
-        return None
-
-    with patch("importlib.util.find_spec", side_effect=find_spec):
-        result = _pyi_stub_lookup("fake_plus", ["MPI_BACKEND"])
-
-    assert result is not None
-    assert result["signature"] == "MPI_BACKEND: object"
-    assert result["kind"] == "variable"
-    assert result["source_file"].endswith("_backend.pyi")
+    # ast.get_docstring only applies to Module/ClassDef/FunctionDef bodies -
+    # a bare variable declaration has no docstring to extract, by design.
+    assert docstring is None
 
 
 def test_pyi_path_for_module_walks_up_to_a_resolvable_ancestor():
@@ -262,20 +244,17 @@ def test_introspect_symbol_backfills_docstring_from_pyi_on_partial_success():
     )
 
 
-def test_pyi_stub_lookup_has_no_source_text():
-    # A .pyi stub only has declarations, not an implementation - lookup_api
-    # must report that honestly rather than returning the stub text itself.
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        so_path = Path(tmp_dir) / f"_compiled{importlib.machinery.EXTENSION_SUFFIXES[0]}"
-        pyi_path = Path(tmp_dir) / "_compiled.pyi"
-        pyi_path.write_text(_PYI_STUB)
+def test_introspect_symbol_reports_import_failure_plainly():
+    # A trusted, licensed install is expected to import cleanly, so a
+    # genuinely failing import (missing package, or an unlicensed
+    # Enterprise wheel) is reported as a plain error - there is no static
+    # .pyi fallback that tries to answer without importing.
+    result = introspect_symbol("not_a_real_package_at_all.Something")
 
-        fake_spec = SimpleNamespace(origin=str(so_path))
-        with patch("importlib.util.find_spec", return_value=fake_spec):
-            result = _pyi_stub_lookup("fake_module", ["Sampler", "sample"])
-
-    assert result is not None
-    assert result["source_text"] is None
+    assert result["error"] is not None
+    assert result["source"] is None
+    assert result["signature"] is None
+    assert result["docstring"] is None
 
 
 if __name__ == "__main__":
@@ -283,9 +262,9 @@ if __name__ == "__main__":
     test_resolve_module_path_returns_module_itself_with_no_remaining_attrs()
     test_find_ast_node_locates_top_level_function()
     test_find_ast_node_locates_nested_method()
-    test_pyi_stub_lookup_parses_signature_and_docstring()
-    test_pyi_stub_lookup_parses_compiled_class_constructor_signature()
+    test_pyi_docstring_extracts_nested_method_docstring()
+    test_pyi_docstring_is_none_for_a_plain_variable()
     test_pyi_path_for_module_walks_up_to_a_resolvable_ancestor()
     test_introspect_symbol_backfills_docstring_from_pyi_on_partial_success()
-    test_pyi_stub_lookup_has_no_source_text()
+    test_introspect_symbol_reports_import_failure_plainly()
     print("ok")

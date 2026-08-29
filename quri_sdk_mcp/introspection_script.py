@@ -6,28 +6,29 @@ import anything beyond the standard library - it runs inside the user's own
 project interpreter, not this server's.
 
 Resolution order for a symbol's signature/docstring:
-1. Live `inspect.signature()`/`inspect.getdoc()`. This resolves for OSS
-   packages and for internal dev/editable `.plus` installs, since both are
-   plain `.py` source.
-2. If live introspection yields no usable signature at all (a Cython-
-   compiled `.plus` customer wheel built without `embedsignature`), fall
-   back entirely to the sibling `.pyi` stub for both signature and
-   docstring. If it yields a signature but no docstring (common for
+1. Live `inspect.signature()`/`inspect.getdoc()`, via a real import. This is
+   the only path for locating a symbol - OSS packages, editable `.plus` dev
+   installs (license checks are compiled out entirely there), and licensed
+   compiled `.plus` customer wheels alike. A licensed Enterprise install is
+   trusted to import and introspect cleanly (verified empirically:
+   Cython-compiled customer wheels do carry real, type-annotated signatures
+   and docstrings once imported successfully). If the import fails outright
+   - a genuinely missing or unlicensed package - that's reported plainly as
+   an error; there is no static fallback that tries to answer without
+   importing.
+2. If live introspection yields a signature but no docstring (common for
    compiled extension classes - e.g. quri-parts' Rust/PyO3 circuit types -
-   that don't embed one), backfill just the docstring from the `.pyi`
-   instead of discarding the real signature.
-
-   The `.pyi` lookup itself doesn't necessarily use the module the symbol
-   was imported through: a symbol can be re-exported from a different
-   module than the one it's actually defined in, so it's located from the
-   live object's own `__module__`/`__qualname__` when available (see
-   `_pyi_lookup_target`). Locating the stub is itself not always a plain
+   that don't embed one), backfill just the docstring from a sibling `.pyi`
+   stub, without discarding the real signature. Since this only ever runs
+   after a successful import, the stub is located from the live object's
+   own `__module__`/`__qualname__` (see `_pyi_lookup_target`) - its true
+   defining location, never a re-exporting module, so there's no re-export
+   chain to follow. Locating the stub is itself not always a plain
    `find_spec(module).origin` - some native extension modules (e.g. some
    PyO3-built submodules) hijack `sys.modules` for themselves and their
    ancestor packages once imported, so `find_spec` can fail several levels
    up; `_pyi_path_for_module` walks up to the nearest still-resolvable
-   ancestor and reconstructs the path from there. None of this executes
-   the target module, so it also works under license gating.
+   ancestor and reconstructs the path from there.
 
 Always prints one JSON object and exits 0, even on failure, so the caller
 can treat "symbol not found" as data rather than a subprocess error.
@@ -57,11 +58,19 @@ def _check_plus_namespaces() -> dict:
 
 
 def _check_symbols(symbols: list[str]) -> dict[str, bool]:
-    """Reports whether each exact dotted symbol is present without importing it."""
+    """Reports whether each exact dotted symbol actually resolves.
+
+    Trusts that a valid Enterprise license is present rather than avoiding
+    the import - reuses the same live-resolution path as the main lookup,
+    so an installed-but-unlicensed `.plus` package correctly reports
+    unavailable instead of a false positive from a directory-existence check.
+    """
     availability = {}
     for symbol in symbols:
         try:
-            availability[symbol] = _symbol_exists_without_import(symbol)
+            module_name, remaining_attrs = _resolve_module_path(symbol)
+            _live_object(module_name, remaining_attrs)
+            availability[symbol] = True
         except Exception:
             availability[symbol] = False
     return availability
@@ -227,48 +236,6 @@ def _find_ast_node(body: list, names: list[str]):
     return None
 
 
-def _find_ast_declaration(body: list, names: list[str]):
-    """Finds a callable, class, variable, or re-export declaration."""
-    node = _find_ast_node(body, names)
-    if node is not None or len(names) != 1:
-        return node
-
-    name = names[0]
-    for candidate in body:
-        if isinstance(candidate, (ast.Import, ast.ImportFrom)):
-            if any(
-                (alias.asname or alias.name.rsplit(".", 1)[-1]) == name
-                for alias in candidate.names
-            ):
-                return candidate
-        if isinstance(candidate, ast.AnnAssign):
-            if isinstance(candidate.target, ast.Name) and candidate.target.id == name:
-                return candidate
-        if isinstance(candidate, ast.Assign):
-            if any(
-                isinstance(target, ast.Name) and target.id == name
-                for target in candidate.targets
-            ):
-                return candidate
-    return None
-
-
-def _ast_defines_name(body: list, name: str) -> bool:
-    """Whether a module AST defines or re-exports `name`."""
-    for node in body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name == name:
-                return True
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            if any((alias.asname or alias.name.rsplit(".", 1)[-1]) == name for alias in node.names):
-                return True
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(isinstance(target, ast.Name) and target.id == name for target in targets):
-                return True
-    return False
-
-
 def _pyi_sibling(module_path: Path) -> Path:
     """Returns the stub path for a Python or ABI-suffixed extension module."""
     for suffix in importlib.machinery.EXTENSION_SUFFIXES:
@@ -276,139 +243,6 @@ def _pyi_sibling(module_path: Path) -> Path:
             stem = module_path.name[: -len(suffix)]
             return module_path.with_name(f"{stem}.pyi")
     return module_path.with_suffix(".pyi")
-
-
-def _declaration_defines_attrs(path: Path, attrs: list[str]) -> bool:
-    """Checks declarations in a source or stub file without importing it."""
-    try:
-        tree = ast.parse(path.read_text())
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return False
-    if len(attrs) == 1:
-        return _ast_defines_name(tree.body, attrs[0])
-    return _find_ast_node(tree.body, attrs) is not None
-
-
-def _symbol_exists_on_sys_path(symbol: str) -> bool:
-    """Resolves an installed symbol from package files without imports.
-
-    `find_spec("package.compiled.child")` imports `package.compiled` while
-    locating the child. Enterprise package initializers are native extensions
-    and can enforce licensing at import time, so availability detection must
-    walk their installed directories and sibling stubs directly instead.
-    """
-    parts = symbol.split(".")
-    locations = [Path(entry) for entry in sys.path if entry and Path(entry).is_dir()]
-    module_suffixes = [".pyi", ".py", *importlib.machinery.EXTENSION_SUFFIXES]
-
-    for index, part in enumerate(parts):
-        package_dirs = [location / part for location in locations]
-        package_dirs = [path for path in package_dirs if path.is_dir()]
-        remaining = parts[index + 1 :]
-        if package_dirs:
-            if not remaining:
-                return True
-            locations = package_dirs
-            continue
-
-        module_files = [
-            location / f"{part}{suffix}"
-            for location in locations
-            for suffix in module_suffixes
-            if (location / f"{part}{suffix}").is_file()
-        ]
-        if module_files:
-            if not remaining:
-                return True
-            declaration_files = []
-            for module_file in module_files:
-                if module_file.suffix in (".py", ".pyi"):
-                    declaration_files.append(module_file)
-                else:
-                    declaration_files.append(_pyi_sibling(module_file))
-            return any(
-                path.is_file() and _declaration_defines_attrs(path, remaining)
-                for path in declaration_files
-            )
-
-        declaration_files = [
-            package_dir / filename
-            for package_dir in locations
-            for filename in ("__init__.pyi", "__init__.py")
-        ]
-        return any(
-            path.is_file() and _declaration_defines_attrs(path, parts[index:])
-            for path in declaration_files
-        )
-    return False
-
-
-def _symbol_exists_without_import(symbol: str) -> bool:
-    """Checks a mapped symbol's module and declaration without import side effects."""
-    if _symbol_exists_on_sys_path(symbol):
-        return True
-    if any(
-        symbol == namespace or symbol.startswith(f"{namespace}.")
-        for namespace in PLUS_NAMESPACES
-    ):
-        return False
-
-    parts = symbol.split(".")
-    for index in range(1, len(parts) + 1):
-        module_name = ".".join(parts[:index])
-        try:
-            spec = importlib.util.find_spec(module_name)
-        except Exception:
-            return False
-        if spec is None:
-            return False
-        remaining_attrs = parts[index:]
-        if not remaining_attrs:
-            return True
-        if len(remaining_attrs) == 1 and spec.origin:
-            source_path = Path(spec.origin)
-            candidates = [source_path]
-            if source_path.suffix != ".pyi":
-                candidates.append(_pyi_sibling(source_path))
-            for candidate in candidates:
-                if candidate.suffix not in (".py", ".pyi") or not candidate.exists():
-                    continue
-                tree = ast.parse(candidate.read_text())
-                if _ast_defines_name(tree.body, remaining_attrs[0]):
-                    return True
-        if not spec.submodule_search_locations:
-            return False
-    return False
-
-
-def _signature_from_pyi_node(node) -> str | None:
-    if isinstance(node, ast.ClassDef):
-        constructor = _find_ast_node(node.body, ["__init__"])
-        if constructor is None:
-            constructor = _find_ast_node(node.body, ["__new__"])
-        if constructor is None:
-            return None
-
-        args = constructor.args
-        posonlyargs = list(args.posonlyargs)
-        positional_args = list(args.args)
-        if posonlyargs:
-            posonlyargs.pop(0)
-        elif positional_args:
-            positional_args.pop(0)
-        constructor_args = ast.arguments(
-            posonlyargs=posonlyargs,
-            args=positional_args,
-            vararg=args.vararg,
-            kwonlyargs=args.kwonlyargs,
-            kw_defaults=args.kw_defaults,
-            kwarg=args.kwarg,
-            defaults=args.defaults,
-        )
-        return f"({ast.unparse(constructor_args)})"
-    prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
-    returns = f" -> {ast.unparse(node.returns)}" if node.returns else ""
-    return f"{prefix} {node.name}({ast.unparse(node.args)}){returns}"
 
 
 def _pyi_path_on_sys_path(module_name: str) -> Path | None:
@@ -503,79 +337,28 @@ def _pyi_lookup_target(
     return fallback_module_name, fallback_attrs
 
 
-def _pyi_stub_lookup(module_name: str, remaining_attrs: list[str]) -> dict | None:
-    """Parses the `.pyi` stub sibling to a compiled module for a symbol."""
+def _pyi_docstring(module_name: str, remaining_attrs: list[str]) -> str | None:
+    """Backfills a docstring from the `.pyi` stub sibling to a compiled
+    module, for an object that imported successfully but didn't carry one
+    live (common for compiled extension classes that don't embed one).
+
+    Only ever called with the object's own defining module/qualname (see
+    `_pyi_lookup_target`), so there's no re-export to follow here - by
+    definition, the stub at the true defining location declares the symbol
+    directly, never as an import of it from somewhere else.
+    """
     pyi_path = _pyi_path_for_module(module_name)
     if pyi_path is None or not pyi_path.exists():
         return None
 
     tree = ast.parse(pyi_path.read_text())
     if not remaining_attrs:
-        return {
-            "signature": None,
-            "docstring": ast.get_docstring(tree, clean=True),
-            "source_file": str(pyi_path),
-            "source_line": None,
-            "source_text": None,
-            "kind": "module",
-        }
+        return ast.get_docstring(tree, clean=True)
 
-    node = _find_ast_declaration(tree.body, remaining_attrs)
+    node = _find_ast_node(tree.body, remaining_attrs)
     if node is None:
         return None
-
-    if isinstance(node, ast.ImportFrom) and len(remaining_attrs) == 1:
-        public_name = remaining_attrs[0]
-        alias = next(
-            (
-                alias
-                for alias in node.names
-                if (alias.asname or alias.name.rsplit(".", 1)[-1]) == public_name
-            ),
-            None,
-        )
-        if alias is not None and node.module:
-            if node.level:
-                package_name = (
-                    module_name
-                    if pyi_path.name == "__init__.pyi"
-                    else module_name.rsplit(".", 1)[0]
-                )
-                target_module = importlib.util.resolve_name(
-                    f"{'.' * node.level}{node.module}", package_name
-                )
-            else:
-                target_module = node.module
-            target = _pyi_stub_lookup(target_module, [alias.name])
-            if target is not None:
-                return target
-
-    if isinstance(node, ast.ClassDef):
-        kind = "class"
-        signature = _signature_from_pyi_node(node)
-    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        kind = "function"
-        signature = _signature_from_pyi_node(node)
-    else:
-        kind = "variable"
-        signature = ast.unparse(node)
-    return {
-        "signature": signature,
-        "docstring": (
-            ast.get_docstring(node, clean=True)
-            if isinstance(
-                node,
-                (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
-            )
-            else None
-        ),
-        "source_file": str(pyi_path),
-        "source_line": node.lineno,
-        # No real Python body to return for compiled code, a .pyi stub only
-        # has declarations, not the implementation.
-        "source_text": None,
-        "kind": kind,
-    }
+    return ast.get_docstring(node, clean=True)
 
 
 def introspect_symbol(symbol: str, availability_symbols: list[str] | None = None) -> dict:
@@ -600,37 +383,24 @@ def introspect_symbol(symbol: str, availability_symbols: list[str] | None = None
         result["module"] = module_name
         result["qualname"] = ".".join(remaining_attrs) or module_name.rsplit(".", 1)[-1]
 
-        live_error = None
-        live = None
-        obj = None
         try:
             obj = _live_object(module_name, remaining_attrs)
-            live = _inspect_live(obj)
         except Exception as e:
-            live_error = f"{type(e).__name__}: {e}"
+            # Import failed outright - a trusted, licensed install is
+            # expected to import cleanly, so this means the package is
+            # genuinely missing or unlicensed. Reported plainly rather than
+            # falling back to a .pyi stub for a full result.
+            result["error"] = f"{type(e).__name__}: {e}"
+            return result
 
-        pyi_module, pyi_attrs = _pyi_lookup_target(obj, module_name, remaining_attrs)
-
-        if live is not None and live["signature"] is not None:
-            result.update(live)
-            result["source"] = "inspect"
-            # Live inspect got a real signature but not necessarily a
-            # docstring (e.g. a PyO3/Rust class whose docstring isn't
-            # embedded) - a sibling .pyi stub can still fill that gap.
-            if not result["docstring"]:
-                stub = _pyi_stub_lookup(pyi_module, pyi_attrs)
-                if stub and stub.get("docstring"):
-                    result["docstring"] = stub["docstring"]
-        else:
-            stub = _pyi_stub_lookup(pyi_module, pyi_attrs)
-            if stub is not None:
-                result.update(stub)
-                result["source"] = "pyi_stub"
-            elif live is not None:
-                result.update(live)
-                result["source"] = "inspect"
-            elif live_error is not None:
-                result["error"] = live_error
+        result.update(_inspect_live(obj))
+        result["source"] = "inspect"
+        # A real signature doesn't guarantee a docstring (e.g. a PyO3/Rust
+        # class whose docstring isn't embedded) - a sibling .pyi stub can
+        # still fill that gap.
+        if not result["docstring"]:
+            pyi_module, pyi_attrs = _pyi_lookup_target(obj, module_name, remaining_attrs)
+            result["docstring"] = _pyi_docstring(pyi_module, pyi_attrs)
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}"
 
