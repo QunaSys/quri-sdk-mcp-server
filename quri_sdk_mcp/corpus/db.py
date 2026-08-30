@@ -73,6 +73,10 @@ def _escape_like(terms: str) -> str:
     return terms.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+MIN_QUERY_LIMIT = 1
+MAX_QUERY_LIMIT = 50
+
+
 def query(
     conn: sqlite3.Connection,
     terms: str,
@@ -85,13 +89,17 @@ def query(
         conn: An open, already-populated corpus connection.
         terms: Free-text search query.
         categories: Optional category filter (e.g. ["tutorial", "example"]).
-        limit: Max results.
+        limit: Max results, clamped to [MIN_QUERY_LIMIT, MAX_QUERY_LIMIT] -
+            SQLite treats a negative LIMIT as unlimited, so an unclamped
+            caller-supplied value could dump the whole corpus.
 
     Returns:
         List of {path, category, title, snippet} dicts, best match first.
     """
     if not terms.strip():
         return []
+
+    limit = max(MIN_QUERY_LIMIT, min(limit, MAX_QUERY_LIMIT))
 
     params: list = []
     if FTS5_AVAILABLE:

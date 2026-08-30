@@ -371,6 +371,25 @@ def test_fetch_example_source_raises_when_neither_extension_exists():
             pass
 
 
+def test_working_directory_must_look_like_a_docs_checkout():
+    # A caller-supplied working_directory that isn't a QURI SDK docs checkout
+    # (e.g. an arbitrary project root) must not be trusted as a read root -
+    # it must not silently expose arbitrary local .md/.rst/.ipynb files.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        (root / "README.md").write_text("# Some unrelated project")
+
+        for call in (
+            lambda: search("anything", working_directory=str(root)),
+            lambda: fetch_example_source("README", working_directory=str(root)),
+        ):
+            try:
+                asyncio.run(call())
+                assert False, "expected ValueError for a non-checkout working_directory"
+            except ValueError:
+                pass
+
+
 if __name__ == "__main__":
     test_classify_category_matches_known_roots()
     test_classify_category_returns_none_for_unknown_paths()
@@ -388,4 +407,5 @@ if __name__ == "__main__":
     test_fetch_example_source_prefers_notebook()
     test_fetch_example_source_falls_back_to_markdown_on_404()
     test_fetch_example_source_raises_when_neither_extension_exists()
+    test_working_directory_must_look_like_a_docs_checkout()
     print("ok")

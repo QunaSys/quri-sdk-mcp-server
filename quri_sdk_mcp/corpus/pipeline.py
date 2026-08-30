@@ -299,7 +299,15 @@ def _find_docs_checkout(path: Path) -> Path | None:
 
 async def _resolve_local_checkout(working_directory: Optional[str]) -> Path | None:
     if working_directory is not None:
-        return Path(working_directory)
+        checkout = _find_docs_checkout(Path(working_directory))
+        if checkout is None:
+            raise ValueError(
+                f"{working_directory!r} does not look like a QURI SDK "
+                "documentation checkout (no docs/release-notes/tutorials/"
+                "examples/community directory found there or in a nearby "
+                "ancestor)"
+            )
+        return checkout
 
     python = resolve_target_python()
     for package in ("quri-parts", "quri-sdk-enterprise"):
