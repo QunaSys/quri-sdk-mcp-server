@@ -91,7 +91,7 @@ A handful of additional tools (e.g. `quri_sdk_start`, `tutorial_start`, `quri_sd
 
 | Variable | Purpose |
 | --- | --- |
-| `QURI_SDK_MCP_PYTHON` | Path to the Python interpreter of the project you're assisting with. `lookup_api`, `search_docs`, `get_example`, and `check_code` use this interpreter and its installed packages so results match the project. Falls back to this server's own interpreter (which bundles the OSS `quri-sdk` install) if unset. |
+| `QURI_SDK_MCP_PYTHON` | Path to the Python interpreter of the project you're assisting with. `lookup_api` and `check_code` always introspect/validate against this interpreter's installed packages. `search_docs`/`get_example` only match the project's exact version when this interpreter has an editable `quri-parts` or `quri-sdk-enterprise` checkout with a recognizable `docs/` directory nearby (or `working_directory` is passed explicitly); otherwise they search the deployed documentation site regardless of which version is installed. Falls back to this server's own interpreter (which bundles the OSS `quri-sdk` install) if unset. |
 | `GITHUB_TOKEN` | A GitHub token used to authenticate `api.github.com` requests (source-tree listings, etc.), raising the otherwise low unauthenticated rate limit. Optional - tools that use it still work unauthenticated, just with a lower rate limit. |
 
 Both variables are optional - omit them to use this server's own bundled interpreter and an unauthenticated (lower rate limit) GitHub client.
