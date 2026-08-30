@@ -12,11 +12,15 @@ import time
 import json
 from pathlib import Path
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
 VENV_PRUNE_TTL_DAYS = 30
 VENV_FRESHNESS_TTL_DAYS = 1
 VENV_CACHE_PRUNE_PROBABILITY = 1 / 20
 VENV_LOCK_TIMEOUT_SECONDS = 600.0
-VENV_LOCK_STALE_SECONDS = 900.0
 
 
 def _venv_cache_root() -> Path:
@@ -41,11 +45,18 @@ def _prune_stale_venvs(cache_root: Path) -> None:
         return
     cutoff = time.time() - VENV_PRUNE_TTL_DAYS * 86400
     for venv_dir in cache_root.iterdir():
-        if (cache_root / f"{venv_dir.name}.lock").exists():
-            continue  # another call is currently building/using this venv
+        if venv_dir.name.endswith(".lock"):
+            continue
         marker = venv_dir / ".ready"
-        if marker.exists() and marker.stat().st_mtime < cutoff:
-            shutil.rmtree(venv_dir, ignore_errors=True)
+        if not (marker.exists() and marker.stat().st_mtime < cutoff):
+            continue
+        # Hold the same lock _venv_lock uses before deleting, so a caller that
+        # acquires it right after can't have its venv pulled out from under it.
+        try:
+            with _try_venv_lock(cache_root, venv_dir.name):
+                shutil.rmtree(venv_dir, ignore_errors=True)
+        except OSError:
+            continue  # another call currently holds the lock; skip this round
 
 
 def _venv_executable(venv_dir: Path, name: str) -> str:
@@ -55,34 +66,62 @@ def _venv_executable(venv_dir: Path, name: str) -> str:
     return str(venv_dir / bin_dir / f"{name}{suffix}")
 
 
+def _lock_file_nonblocking(handle) -> None:
+    """Raises OSError if another process already holds the lock."""
+    if sys.platform == "win32":
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(handle) -> None:
+    if sys.platform == "win32":
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def _try_venv_lock(cache_root: Path, cache_key: str):
+    """Attempts to acquire the venv lock without blocking; raises OSError if
+    another process already holds it. A real OS file lock, so a crashed
+    holder's lock is released by the kernel rather than guessed via a
+    staleness timeout, and there is no window where the lock is absent while
+    a holder is still using the venv (unlike a lock-file-exists check).
+    """
+    lock_path = cache_root / f"{cache_key}.lock"
+    with open(lock_path, "w") as handle:
+        _lock_file_nonblocking(handle)
+        try:
+            yield
+        finally:
+            _unlock_file(handle)
+
+
 @contextlib.contextmanager
 def _venv_lock(cache_root: Path, cache_key: str):
-    """Cross-process advisory lock so concurrent calls for the same cache key don't
-    race on venv creation. Path.mkdir() without exist_ok is atomic on POSIX and NTFS.
+    """Cross-process lock so concurrent calls for the same cache key don't race
+    on venv creation. Blocks (polling) until acquired or VENV_LOCK_TIMEOUT_SECONDS
+    elapses. Acquisition failure (OSError) is only caught around the attempt
+    itself, not the caller's body, so an OSError raised inside the `with`
+    block still propagates instead of being mistaken for lock contention.
     """
-    lock_dir = cache_root / f"{cache_key}.lock"
+    lock_path = cache_root / f"{cache_key}.lock"
     deadline = time.monotonic() + VENV_LOCK_TIMEOUT_SECONDS
-    while True:
-        try:
-            lock_dir.mkdir()
-            break
-        except FileExistsError:
+    with open(lock_path, "w") as handle:
+        while True:
             try:
-                age = time.time() - lock_dir.stat().st_mtime
-            except FileNotFoundError:
-                continue  # holder released it between our mkdir and stat
-            if age > VENV_LOCK_STALE_SECONDS:
-                # ponytail: age-based stale-lock steal, no pid-liveness check;
-                # revisit if a crashed holder is ever actually observed
-                shutil.rmtree(lock_dir, ignore_errors=True)
-                continue
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"Timed out waiting for venv lock: {cache_key}")
-            time.sleep(0.2)
-    try:
-        yield
-    finally:
-        shutil.rmtree(lock_dir, ignore_errors=True)
+                _lock_file_nonblocking(handle)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"Timed out waiting for venv lock: {cache_key}")
+                time.sleep(0.2)
+        try:
+            yield
+        finally:
+            _unlock_file(handle)
 
 
 def _is_venv_fresh(marker_path: Path) -> bool:

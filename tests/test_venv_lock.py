@@ -9,10 +9,12 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 from quri_sdk_mcp.py_checker.pyright_check import (
-    VENV_LOCK_STALE_SECONDS,
     _is_venv_fresh,
+    _prune_stale_venvs,
+    _try_venv_lock,
     _venv_lock,
 )
 
@@ -41,18 +43,57 @@ def test_lock_excludes_concurrent_entry():
         assert concurrent["max"] == 1
 
 
-def test_stale_lock_is_stolen():
+def test_held_lock_blocks_try_lock():
     with tempfile.TemporaryDirectory() as cache_root:
         cache_root = Path(cache_root)
-        lock_dir = cache_root / "key.lock"
-        lock_dir.mkdir()
-        stale_time = time.time() - VENV_LOCK_STALE_SECONDS - 1
-        os.utime(lock_dir, (stale_time, stale_time))
+        with _venv_lock(cache_root, "key"):
+            try:
+                with _try_venv_lock(cache_root, "key"):
+                    raise AssertionError("should not have acquired a held lock")
+            except OSError:
+                pass
+
+
+def test_crashed_holder_releases_lock():
+    # A held lock's file descriptor closing (process exit/crash) is what the OS
+    # uses to release a flock/LockFileEx lock; simulate it directly instead of
+    # any staleness heuristic.
+    with tempfile.TemporaryDirectory() as cache_root:
+        cache_root = Path(cache_root)
+        with _try_venv_lock(cache_root, "key"):
+            pass  # lock released on exit, as if the holder had crashed
 
         entered = []
         with _venv_lock(cache_root, "key"):
             entered.append(True)
         assert entered == [True]
+
+
+def test_prune_skips_stale_venv_held_by_another_caller():
+    with tempfile.TemporaryDirectory() as cache_root:
+        cache_root = Path(cache_root)
+        venv_dir = cache_root / "key"
+        venv_dir.mkdir()
+        (venv_dir / ".ready").touch()
+        os.utime(venv_dir / ".ready", (0, 0))  # far in the past: stale
+
+        with _venv_lock(cache_root, "key"):
+            with patch("quri_sdk_mcp.py_checker.pyright_check.random.random", return_value=0.0):
+                _prune_stale_venvs(cache_root)
+            assert venv_dir.exists()  # held lock protected it from deletion
+
+
+def test_prune_deletes_stale_unlocked_venv():
+    with tempfile.TemporaryDirectory() as cache_root:
+        cache_root = Path(cache_root)
+        venv_dir = cache_root / "key"
+        venv_dir.mkdir()
+        (venv_dir / ".ready").touch()
+        os.utime(venv_dir / ".ready", (0, 0))  # far in the past: stale
+
+        with patch("quri_sdk_mcp.py_checker.pyright_check.random.random", return_value=0.0):
+            _prune_stale_venvs(cache_root)
+        assert not venv_dir.exists()
 
 
 def test_fresh_marker_within_ttl():
@@ -85,7 +126,10 @@ def test_touching_marker_refreshes_mtime_but_not_created_at():
 
 if __name__ == "__main__":
     test_lock_excludes_concurrent_entry()
-    test_stale_lock_is_stolen()
+    test_held_lock_blocks_try_lock()
+    test_crashed_holder_releases_lock()
+    test_prune_skips_stale_venv_held_by_another_caller()
+    test_prune_deletes_stale_unlocked_venv()
     test_fresh_marker_within_ttl()
     test_stale_marker_past_ttl()
     test_touching_marker_refreshes_mtime_but_not_created_at()
