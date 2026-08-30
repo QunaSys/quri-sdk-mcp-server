@@ -9,6 +9,7 @@ dependencies = [
     "lxml>=6.0.2",
     "markdownify>=1.2.0",
     "mcp[cli]>=1.14.1,<2",
+    "pyright>=1.1.406,<1.2",
     "quri-parts>=0.26.4",
     "quri-sdk>=0.26.4",
 ]
