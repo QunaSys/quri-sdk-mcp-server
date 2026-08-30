@@ -12,6 +12,8 @@ from typing import Any
 from quri_sdk_mcp.env_resolution import resolve_target_python
 
 _INTROSPECTION_SCRIPT = Path(__file__).parent / "introspection_script.py"
+_ALLOWED_NAMESPACES = ("quri_parts", "quri_algo", "quri_vm")
+_INTROSPECTION_TIMEOUT_SECONDS = 30
 
 
 def load_plus_mapping() -> dict[str, list[dict[str, Any]]]:
@@ -38,6 +40,24 @@ def load_plus_mapping() -> dict[str, list[dict[str, Any]]]:
     return dict(by_oss_symbol)
 
 
+def _error_result(symbol: str, message: str) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "module": None,
+        "qualname": None,
+        "signature": None,
+        "docstring": None,
+        "source_file": None,
+        "source_line": None,
+        "source_text": None,
+        "kind": None,
+        "source": None,
+        "error": message,
+        "plus_namespaces": {},
+        "plus_symbols": {},
+    }
+
+
 def lookup_symbol(symbol: str) -> dict[str, Any]:
     """Looks up a `quri_parts`/`quri_algo`/`quri_vm` symbol in the target
     interpreter (see `env_resolution.resolve_target_python`).
@@ -53,6 +73,14 @@ def lookup_symbol(symbol: str) -> dict[str, Any]:
         `available` (whether the target interpreter contains that exact
         mapped `.plus` symbol).
     """
+    top_level = symbol.split(".", 1)[0]
+    if top_level not in _ALLOWED_NAMESPACES:
+        return _error_result(
+            symbol,
+            f"Refusing to introspect {symbol!r}: only "
+            f"{', '.join(_ALLOWED_NAMESPACES)} symbols are supported.",
+        )
+
     python = resolve_target_python()
     plus_entries = load_plus_mapping().get(symbol, [])
     plus_symbols = [entry["plus_symbol"] for entry in plus_entries]
@@ -62,24 +90,17 @@ def lookup_symbol(symbol: str) -> dict[str, Any]:
             capture_output=True,
             text=True,
             check=True,
+            timeout=_INTROSPECTION_TIMEOUT_SECONDS,
         )
         info = json.loads(process.stdout)
+    except subprocess.TimeoutExpired:
+        return _error_result(
+            symbol,
+            f"Introspection via {python} timed out after "
+            f"{_INTROSPECTION_TIMEOUT_SECONDS}s",
+        )
     except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as e:
-        return {
-            "symbol": symbol,
-            "module": None,
-            "qualname": None,
-            "signature": None,
-            "docstring": None,
-            "source_file": None,
-            "source_line": None,
-            "source_text": None,
-            "kind": None,
-            "source": None,
-            "error": f"Failed to introspect via {python}: {e}",
-            "plus_namespaces": {},
-            "plus_symbols": {},
-        }
+        return _error_result(symbol, f"Failed to introspect via {python}: {e}")
 
     if plus_entries:
         available_symbols = info.get("plus_symbols", {})

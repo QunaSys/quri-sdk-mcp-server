@@ -4,6 +4,7 @@ Run directly: `python tests/test_plus_mapping.py`.
 """
 
 import json
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -64,9 +65,32 @@ def test_lookup_reports_availability_for_each_exact_plus_symbol():
     assert run.call_args.args[0][-2:] == [first, second]
 
 
+def test_lookup_rejects_symbol_outside_allowed_namespaces():
+    with patch("quri_sdk_mcp.introspection.subprocess.run") as run:
+        result = lookup_symbol("os.system")
+
+    run.assert_not_called()
+    assert result["error"] is not None
+    assert result["source_text"] is None
+
+
+def test_lookup_reports_timeout_as_a_structured_result():
+    with patch(
+        "quri_sdk_mcp.introspection.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="python", timeout=30),
+    ):
+        result = lookup_symbol("quri_parts.circuit.QuantumCircuit")
+
+    assert "timed out" in result["error"]
+    assert result["source_text"] is None
+
+
 if __name__ == "__main__":
     test_every_entry_has_required_fields()
     test_every_entry_has_a_known_top_level_namespace()
     test_lookup_by_known_oss_symbol()
     test_oss_symbol_with_multiple_plus_upgrades_keeps_both()
+    test_lookup_reports_availability_for_each_exact_plus_symbol()
+    test_lookup_rejects_symbol_outside_allowed_namespaces()
+    test_lookup_reports_timeout_as_a_structured_result()
     print("ok")
