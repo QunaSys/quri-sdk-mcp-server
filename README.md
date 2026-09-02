@@ -139,6 +139,7 @@ If you're running from a clone instead, via `uv`:
 
 Replace `/ABSOLUTE/PATH/TO/quri-sdk-mcp-server` with the actual path to the repository.
 Add an `env` object only when you have real values to supply, as described in [Environment variables](#environment-variables).
+A ready-to-use copy of this `uv`-based configuration lives at `examples/mcp.json` if you prefer to start from a file instead of copying the snippet.
 
 Restart Claude Desktop after updating the config.
 
@@ -176,8 +177,6 @@ Restart Claude Desktop after updating the config.
   ]
 }
 ```
-
-A ready-to-use copy of this configuration lives at `examples/mcp.json` if you prefer to start from a file instead of copying the snippet.
 
 
 ## Example prompts to try
