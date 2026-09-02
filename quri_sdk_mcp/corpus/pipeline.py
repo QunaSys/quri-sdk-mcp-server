@@ -188,16 +188,20 @@ def _write_corpus_cache(
     )
     os.close(fd)
     tmp_path = Path(tmp_name)
-    conn = sqlite3.connect(tmp_path)
     try:
-        db.create_schema(conn)
-        for (docname, title), body in zip(pages, bodies):
-            if body is not None:
-                db.insert_doc(conn, docname, _classify_category(docname), title, body)
-        conn.commit()
-    finally:
-        conn.close()
-    tmp_path.replace(cache_path)
+        conn = sqlite3.connect(tmp_path)
+        try:
+            db.create_schema(conn)
+            for (docname, title), body in zip(pages, bodies):
+                if body is not None:
+                    db.insert_doc(conn, docname, _classify_category(docname), title, body)
+            conn.commit()
+        finally:
+            conn.close()
+        tmp_path.replace(cache_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
     return cache_path
 
 
