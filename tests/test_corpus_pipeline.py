@@ -171,7 +171,7 @@ def test_get_corpus_falls_back_to_enterprise_checkout():
             "quri_sdk_mcp.corpus.pipeline.get_editable_source",
             side_effect=fake_get_editable_source,
         ):
-            conn = asyncio.run(get_corpus(None))
+            conn, _ = asyncio.run(get_corpus(None))
         try:
             results = db.query(conn, "Enterprise")
             assert len(results) == 1
@@ -195,7 +195,7 @@ def test_get_corpus_survives_malformed_editable_source_metadata():
             "quri_sdk_mcp.corpus.pipeline.get_editable_source",
             side_effect=fake_get_editable_source,
         ):
-            conn = asyncio.run(get_corpus(None))
+            conn, _ = asyncio.run(get_corpus(None))
         try:
             results = db.query(conn, "Enterprise")
             assert len(results) == 1

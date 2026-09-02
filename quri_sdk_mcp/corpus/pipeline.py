@@ -328,18 +328,29 @@ async def _resolve_local_checkout(working_directory: Optional[str]) -> Path | No
     return None
 
 
-async def _remote_corpus() -> sqlite3.Connection:
-    cache_path = await build_remote_corpus()
+def _open_remote_corpus(cache_path: Path) -> Optional[sqlite3.Connection]:
+    """Blocking; run via to_thread. Returns None on an FTS5-availability
+    schema mismatch, signaling the caller to rebuild and retry."""
     conn = sqlite3.connect(cache_path)
     if db.docs_table_is_fts5(conn) != db.FTS5_AVAILABLE:
         conn.close()
         cache_path.unlink(missing_ok=True)
-        cache_path = await build_remote_corpus()
-        conn = sqlite3.connect(cache_path)
+        return None
     return conn
 
 
-async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
+async def _remote_corpus() -> sqlite3.Connection:
+    cache_path = await build_remote_corpus()
+    conn = await asyncio.to_thread(_open_remote_corpus, cache_path)
+    if conn is None:
+        cache_path = await build_remote_corpus()
+        conn = await asyncio.to_thread(sqlite3.connect, cache_path)
+    return conn
+
+
+async def get_corpus(
+    working_directory: Optional[str],
+) -> tuple[sqlite3.Connection, Optional[Path]]:
     """Resolves an open, populated corpus connection.
 
     Selection order:
@@ -349,11 +360,17 @@ async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
        contains recognizable doc content (a `docs/` or `release-notes/`
        directory next to it) - search that.
     3. Else, the persistent live-site crawl cache.
+
+    Returns:
+        (connection, local_checkout) - local_checkout is the resolved local
+        docs checkout path if one was used, else None.
     """
     local_checkout = await _resolve_local_checkout(working_directory)
     if local_checkout is not None:
-        return await asyncio.to_thread(build_local_corpus, local_checkout)
-    return await _remote_corpus()
+        conn = await asyncio.to_thread(build_local_corpus, local_checkout)
+    else:
+        conn = await _remote_corpus()
+    return conn, local_checkout
 
 
 async def search(
@@ -363,13 +380,11 @@ async def search(
     working_directory: Optional[str] = None,
 ) -> list[dict[str, str]]:
     """Resolves a corpus (see `get_corpus`) and searches it."""
-    local_checkout = await _resolve_local_checkout(working_directory)
-    if local_checkout is not None:
-        conn = await asyncio.to_thread(build_local_corpus, local_checkout)
-    else:
-        conn = await _remote_corpus()
+    conn, local_checkout = await get_corpus(working_directory)
     try:
-        results = db.query(conn, query, categories=categories, limit=limit)
+        results = await asyncio.to_thread(
+            db.query, conn, query, categories=categories, limit=limit
+        )
         if local_checkout is not None:
             for result in results:
                 result["working_directory"] = str(local_checkout)
