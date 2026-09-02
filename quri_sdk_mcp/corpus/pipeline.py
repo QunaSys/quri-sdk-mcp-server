@@ -420,9 +420,17 @@ async def fetch_example_source(
     relative_path = PurePosixPath(path)
     if relative_path.is_absolute() or ".." in relative_path.parts:
         raise ValueError("Example path must stay within the documentation source tree")
-    path_without_suffix = str(relative_path.with_suffix(""))
+    # `path` is a dotted-module-safe docname (e.g. "docs/api/quri_parts.qulacs")
+    # and may itself contain dots that aren't a file extension, so only strip
+    # one if it's actually a known extension - mirrors _fetch_local_source.
+    known_extensions = (*_EXAMPLE_SOURCE_EXTENSIONS, ".rst")
+    path_without_suffix = (
+        str(relative_path.with_suffix(""))
+        if relative_path.name.endswith(known_extensions)
+        else str(relative_path)
+    )
     last_error: Optional[ConnectionError] = None
-    for suffix in _EXAMPLE_SOURCE_EXTENSIONS:
+    for suffix in known_extensions:
         url = f"{_EXAMPLE_SOURCE_BASE}/{path_without_suffix}{suffix}"
         try:
             response = await Fetcher._fetch(FetchRequestArgs(url=url))
