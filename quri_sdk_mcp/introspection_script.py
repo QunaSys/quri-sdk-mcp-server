@@ -223,17 +223,22 @@ def _find_ast_node(body: list, names: list[str]):
     if not names:
         return None
     target, rest = names[0], names[1:]
-    for node in body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
-        if node.name != target:
-            continue
-        if not rest:
-            return node
+    candidates = [
+        node
+        for node in body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name == target
+    ]
+    if not candidates:
+        return None
+    if rest:
+        node = candidates[0]
         if isinstance(node, ast.ClassDef):
             return _find_ast_node(node.body, rest)
         return None
-    return None
+    # `@overload` stubs commonly repeat the name with only the last variant
+    # carrying a docstring; prefer whichever candidate actually has one.
+    return next((node for node in candidates if ast.get_docstring(node)), candidates[0])
 
 
 def _pyi_sibling(module_path: Path) -> Path:
