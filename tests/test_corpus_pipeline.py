@@ -171,7 +171,7 @@ def test_get_corpus_falls_back_to_enterprise_checkout():
             "quri_sdk_mcp.corpus.pipeline.get_editable_source",
             side_effect=fake_get_editable_source,
         ):
-            conn, _ = asyncio.run(get_corpus(None))
+            conn = asyncio.run(get_corpus(None))
         try:
             results = db.query(conn, "Enterprise")
             assert len(results) == 1
@@ -195,12 +195,83 @@ def test_get_corpus_survives_malformed_editable_source_metadata():
             "quri_sdk_mcp.corpus.pipeline.get_editable_source",
             side_effect=fake_get_editable_source,
         ):
-            conn, _ = asyncio.run(get_corpus(None))
+            conn = asyncio.run(get_corpus(None))
         try:
             results = db.query(conn, "Enterprise")
             assert len(results) == 1
         finally:
             conn.close()
+
+
+def test_get_corpus_merges_quri_parts_and_enterprise_checkouts():
+    # quri-sdk-enterprise's docs are a complement to quri-parts's (disjoint
+    # .plus-only tutorials, overlapping-but-thin reference stubs), not a
+    # superset - both should be searchable together, each result tagged
+    # with the checkout it actually came from, and an overlapping docname
+    # should only appear once (quri-parts, listed first, wins).
+    with tempfile.TemporaryDirectory() as oss_dir, tempfile.TemporaryDirectory() as ent_dir:
+        oss_root, ent_root = Path(oss_dir), Path(ent_dir)
+
+        oss_tutorials = oss_root / "docs" / "tutorials"
+        oss_tutorials.mkdir(parents=True)
+        (oss_tutorials / "circuits.md").write_text("# Circuits\n\noss_only_token")
+
+        ent_tutorials = ent_root / "docs" / "tutorials"
+        ent_tutorials.mkdir(parents=True)
+        (ent_tutorials / "gpu.md").write_text("# GPU\n\nenterprise_only_token")
+
+        oss_api = oss_root / "docs" / "api"
+        oss_api.mkdir(parents=True)
+        (oss_api / "quri_parts.qulacs.rst").write_text("shared_symbol_token (oss)")
+        ent_api = ent_root / "docs" / "api"
+        ent_api.mkdir(parents=True)
+        (ent_api / "quri_parts.qulacs.rst").write_text("shared_symbol_token (enterprise)")
+
+        def fake_get_editable_source(python, package="quri-parts"):
+            return {"quri-parts": oss_root, "quri-sdk-enterprise": ent_root}[package]
+
+        with patch(
+            "quri_sdk_mcp.corpus.pipeline.get_editable_source",
+            side_effect=fake_get_editable_source,
+        ):
+            conn = asyncio.run(get_corpus(None))
+        try:
+            oss_results = db.query(conn, "oss_only_token")
+            assert len(oss_results) == 1
+            assert oss_results[0]["working_directory"] == str(oss_root)
+
+            ent_results = db.query(conn, "enterprise_only_token")
+            assert len(ent_results) == 1
+            assert ent_results[0]["working_directory"] == str(ent_root)
+
+            shared_results = db.query(conn, "shared_symbol_token")
+            assert len(shared_results) == 1
+            assert shared_results[0]["working_directory"] == str(oss_root)
+        finally:
+            conn.close()
+
+
+def test_fetch_example_source_auto_detects_across_both_checkouts():
+    # A doc that only exists in the second auto-detected checkout must
+    # still be reachable without the caller passing working_directory back.
+    with tempfile.TemporaryDirectory() as oss_dir, tempfile.TemporaryDirectory() as ent_dir:
+        oss_root, ent_root = Path(oss_dir), Path(ent_dir)
+        (oss_root / "docs" / "tutorials").mkdir(parents=True)
+        ent_tutorials = ent_root / "docs" / "tutorials"
+        ent_tutorials.mkdir(parents=True)
+        source = "# GPU\n\nenterprise-only tutorial body"
+        (ent_tutorials / "gpu.md").write_text(source)
+
+        def fake_get_editable_source(python, package="quri-parts"):
+            return {"quri-parts": oss_root, "quri-sdk-enterprise": ent_root}[package]
+
+        with patch(
+            "quri_sdk_mcp.corpus.pipeline.get_editable_source",
+            side_effect=fake_get_editable_source,
+        ):
+            text = asyncio.run(fetch_example_source("docs/tutorials/gpu"))
+
+    assert text == source
 
 
 def test_concurrent_remote_rebuilds_do_not_collide():
@@ -403,6 +474,8 @@ if __name__ == "__main__":
     test_build_local_corpus_indexes_bare_layout()
     test_get_corpus_falls_back_to_enterprise_checkout()
     test_get_corpus_survives_malformed_editable_source_metadata()
+    test_get_corpus_merges_quri_parts_and_enterprise_checkouts()
+    test_fetch_example_source_auto_detects_across_both_checkouts()
     test_concurrent_remote_rebuilds_do_not_collide()
     test_fetch_example_source_prefers_notebook()
     test_fetch_example_source_falls_back_to_markdown_on_404()

@@ -168,7 +168,8 @@ def get_mcp_server() -> FastMCP:
                 `working_directory` field for `fetch_example_source`. Usually
                 not needed - this is
                 auto-detected from the target interpreter's editable-install
-                metadata when possible.
+                metadata when possible, searching both quri-parts and
+                quri-sdk-enterprise checkouts together if both are found.
 
         Returns:
             list[dict]: Matches as {path, category, title, snippet}, best

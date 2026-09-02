@@ -12,9 +12,12 @@ from typing import Optional
 
 _FTS5_SCHEMA = (
     "CREATE VIRTUAL TABLE docs USING fts5("
-    "path, category, title, body, tokenize='porter unicode61')"
+    "path, category, title, body, source_root UNINDEXED, "
+    "tokenize='porter unicode61')"
 )
-_FALLBACK_SCHEMA = "CREATE TABLE docs (path TEXT, category TEXT, title TEXT, body TEXT)"
+_FALLBACK_SCHEMA = (
+    "CREATE TABLE docs (path TEXT, category TEXT, title TEXT, body TEXT, source_root TEXT)"
+)
 
 
 def _fts5_available() -> bool:
@@ -55,11 +58,25 @@ def docs_table_is_fts5(conn: sqlite3.Connection) -> bool:
     return "VIRTUAL TABLE" in row[0].upper()
 
 
-def insert_doc(conn: sqlite3.Connection, path: str, category: str, title: str, body: str) -> None:
-    """Adds one document to the corpus."""
+def insert_doc(
+    conn: sqlite3.Connection,
+    path: str,
+    category: str,
+    title: str,
+    body: str,
+    source_root: Optional[str] = None,
+) -> None:
+    """Adds one document to the corpus.
+
+    Args:
+        source_root: For a local-mode corpus built from more than one
+            checkout, the checkout root this document came from - carried
+            through `query()`'s `working_directory` field so a later
+            `fetch_example_source` call resolves back to the right one.
+    """
     conn.execute(
-        "INSERT INTO docs (path, category, title, body) VALUES (?, ?, ?, ?)",
-        (path, category, title, body),
+        "INSERT INTO docs (path, category, title, body, source_root) VALUES (?, ?, ?, ?, ?)",
+        (path, category, title, body, source_root),
     )
 
 
@@ -105,13 +122,13 @@ def query(
     if FTS5_AVAILABLE:
         sql = (
             "SELECT path, category, title, "
-            "snippet(docs, 3, '**', '**', '...', 20) AS snippet, "
+            "snippet(docs, 3, '**', '**', '...', 20) AS snippet, source_root, "
             "bm25(docs) AS rank FROM docs WHERE docs MATCH ?"
         )
         params.append(_sanitize_fts_query(terms))
     else:
         sql = (
-            "SELECT path, category, title, substr(body, 1, 300) AS snippet "
+            "SELECT path, category, title, substr(body, 1, 300) AS snippet, source_root "
             "FROM docs WHERE body LIKE ? ESCAPE '\\'"
         )
         params.append(f"%{_escape_like(terms)}%")
@@ -124,7 +141,10 @@ def query(
     params.append(limit)
 
     rows = conn.execute(sql, params).fetchall()
-    return [
-        {"path": row[0], "category": row[1], "title": row[2], "snippet": row[3]}
-        for row in rows
-    ]
+    results = []
+    for row in rows:
+        result = {"path": row[0], "category": row[1], "title": row[2], "snippet": row[3]}
+        if row[4] is not None:
+            result["working_directory"] = row[4]
+        results.append(result)
+    return results

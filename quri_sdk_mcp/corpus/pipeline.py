@@ -255,13 +255,37 @@ async def build_remote_corpus() -> Path:
 def build_local_corpus(working_directory: Path) -> sqlite3.Connection:
     """Builds an in-memory docs corpus from a local checkout, fresh on every
     call (see module docstring for why this isn't cached)."""
+    return build_local_corpora([working_directory])
+
+
+def build_local_corpora(working_directories: list[Path]) -> sqlite3.Connection:
+    """Builds an in-memory docs corpus from one or more local checkouts,
+    fresh on every call (see module docstring for why this isn't cached).
+
+    Multiple checkouts (e.g. `quri-parts` and `quri-sdk-enterprise`) share
+    one connection so a single search ranks across all of them - their doc
+    sets are complementary (OSS vs `.plus`-only tutorials, overlapping but
+    thin reference stubs), not one a superset of the other. A docname
+    already indexed from an earlier checkout is skipped if a later one
+    repeats it, so the first-listed checkout wins any overlap.
+    """
     # check_same_thread=False: this runs inside asyncio.to_thread and hands
     # the connection back to the caller's (event-loop) thread; usage is
     # handed off sequentially, never concurrent, so this is safe.
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     db.create_schema(conn)
+    indexed_paths: set[str] = set()
+    for working_directory in working_directories:
+        _index_local_docs(conn, working_directory, indexed_paths)
+    conn.commit()
+    return conn
+
+
+def _index_local_docs(
+    conn: sqlite3.Connection, working_directory: Path, indexed_paths: set
+) -> None:
     content_root = _docs_content_root(working_directory)
-    indexed_paths = set()
+    source_root = str(working_directory)
     for root_name in _LOCAL_ROOT_DIRS:
         root_dir = content_root / root_name
         if not root_dir.is_dir():
@@ -284,10 +308,9 @@ def build_local_corpus(working_directory: Path) -> sqlite3.Connection:
                     category,
                     _extract_title(body, rel_path),
                     body,
+                    source_root=source_root,
                 )
                 indexed_paths.add(result_path)
-    conn.commit()
-    return conn
 
 
 def _looks_like_docs_checkout(path: Path) -> bool:
@@ -301,7 +324,16 @@ def _find_docs_checkout(path: Path) -> Path | None:
     return next((candidate for candidate in candidates if _looks_like_docs_checkout(candidate)), None)
 
 
-async def _resolve_local_checkout(working_directory: Optional[str]) -> Path | None:
+async def _resolve_local_checkouts(working_directory: Optional[str]) -> list[Path]:
+    """Resolves the local docs checkout(s) to search, if any.
+
+    If `working_directory` is given explicitly, resolves and returns just
+    that one checkout. Otherwise, auto-detects from the target
+    interpreter's editable installs - both `quri-parts` and
+    `quri-sdk-enterprise` are included if both resolve, since their doc
+    sets are complementary rather than one being a superset of the other
+    (see `build_local_corpora`).
+    """
     if working_directory is not None:
         checkout = _find_docs_checkout(Path(working_directory))
         if checkout is None:
@@ -311,9 +343,10 @@ async def _resolve_local_checkout(working_directory: Optional[str]) -> Path | No
                 "examples/community directory found there or in a nearby "
                 "ancestor)"
             )
-        return checkout
+        return [checkout]
 
     python = resolve_target_python()
+    checkouts: list[Path] = []
     for package in ("quri-parts", "quri-sdk-enterprise"):
         try:
             editable_source = await asyncio.to_thread(
@@ -323,9 +356,9 @@ async def _resolve_local_checkout(working_directory: Optional[str]) -> Path | No
             continue
         if editable_source is not None:
             checkout = _find_docs_checkout(editable_source)
-            if checkout is not None:
-                return checkout
-    return None
+            if checkout is not None and checkout not in checkouts:
+                checkouts.append(checkout)
+    return checkouts
 
 
 def _open_remote_corpus(cache_path: Path) -> Optional[sqlite3.Connection]:
@@ -348,29 +381,21 @@ async def _remote_corpus() -> sqlite3.Connection:
     return conn
 
 
-async def get_corpus(
-    working_directory: Optional[str],
-) -> tuple[sqlite3.Connection, Optional[Path]]:
+async def get_corpus(working_directory: Optional[str]) -> sqlite3.Connection:
     """Resolves an open, populated corpus connection.
 
     Selection order:
     1. `working_directory` given explicitly - search it directly.
-    2. Else, if the target interpreter has an editable `quri-parts` or
+    2. Else, if the target interpreter has an editable `quri-parts` and/or
        `quri-sdk-enterprise` install whose resolved local path itself
        contains recognizable doc content (a `docs/` or `release-notes/`
-       directory next to it) - search that.
+       directory next to it) - search those (both, if both resolve).
     3. Else, the persistent live-site crawl cache.
-
-    Returns:
-        (connection, local_checkout) - local_checkout is the resolved local
-        docs checkout path if one was used, else None.
     """
-    local_checkout = await _resolve_local_checkout(working_directory)
-    if local_checkout is not None:
-        conn = await asyncio.to_thread(build_local_corpus, local_checkout)
-    else:
-        conn = await _remote_corpus()
-    return conn, local_checkout
+    local_checkouts = await _resolve_local_checkouts(working_directory)
+    if local_checkouts:
+        return await asyncio.to_thread(build_local_corpora, local_checkouts)
+    return await _remote_corpus()
 
 
 async def search(
@@ -380,37 +405,34 @@ async def search(
     working_directory: Optional[str] = None,
 ) -> list[dict[str, str]]:
     """Resolves a corpus (see `get_corpus`) and searches it."""
-    conn, local_checkout = await get_corpus(working_directory)
+    conn = await get_corpus(working_directory)
     try:
-        results = await asyncio.to_thread(
+        return await asyncio.to_thread(
             db.query, conn, query, categories=categories, limit=limit
         )
-        if local_checkout is not None:
-            for result in results:
-                result["working_directory"] = str(local_checkout)
-        return results
     finally:
         conn.close()
 
 
-def _fetch_local_source(path: str, working_directory: Path) -> str:
-    content_root = _docs_content_root(working_directory).resolve()
+def _fetch_local_source(path: str, working_directories: list[Path]) -> str:
     relative_path = PurePosixPath(path)
     if relative_path.is_absolute() or ".." in relative_path.parts:
         raise ValueError("Example path must stay within the documentation checkout")
-    base_path = content_root.joinpath(*relative_path.parts)
     known_extensions = (*_EXAMPLE_SOURCE_EXTENSIONS, ".rst")
-    candidates = (
-        (base_path,)
-        if base_path.name.endswith(known_extensions)
-        else tuple(base_path.parent / (base_path.name + ext) for ext in known_extensions)
-    )
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if not resolved.is_relative_to(content_root):
-            raise ValueError("Example path must stay within the documentation checkout")
-        if resolved.is_file():
-            return resolved.read_text(encoding="utf-8", errors="replace")
+    for working_directory in working_directories:
+        content_root = _docs_content_root(working_directory).resolve()
+        base_path = content_root.joinpath(*relative_path.parts)
+        candidates = (
+            (base_path,)
+            if base_path.name.endswith(known_extensions)
+            else tuple(base_path.parent / (base_path.name + ext) for ext in known_extensions)
+        )
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(content_root):
+                raise ValueError("Example path must stay within the documentation checkout")
+            if resolved.is_file():
+                return resolved.read_text(encoding="utf-8", errors="replace")
     raise ConnectionError(f"No local notebook or documentation source found for {path!r}")
 
 
@@ -432,9 +454,9 @@ async def fetch_example_source(
         ConnectionError: if neither extension exists at `path`, or the
             request otherwise fails.
     """
-    local_checkout = await _resolve_local_checkout(working_directory)
-    if local_checkout is not None:
-        return await asyncio.to_thread(_fetch_local_source, path, local_checkout)
+    local_checkouts = await _resolve_local_checkouts(working_directory)
+    if local_checkouts:
+        return await asyncio.to_thread(_fetch_local_source, path, local_checkouts)
 
     relative_path = PurePosixPath(path)
     if relative_path.is_absolute() or ".." in relative_path.parts:
