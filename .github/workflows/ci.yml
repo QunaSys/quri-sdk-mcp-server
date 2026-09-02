@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run pytest
+      - run: uv run flake8 quri_sdk_mcp scripts tests
+      - name: Build wheel
+        run: uv build --wheel -o dist
+      - name: Install wheel into a clean venv
+        run: |
+          uv venv wheel-smoke-test
+          uv pip install --python wheel-smoke-test/bin/python dist/*.whl
+      - name: Smoke-test the quri-sdk-mcp console entry point
+        run: wheel-smoke-test/bin/quri-sdk-mcp < /dev/null

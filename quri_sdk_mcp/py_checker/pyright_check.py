@@ -191,13 +191,19 @@ def create_pyrightconfig(
 
     return config
 
+
 def _run_pyright_on_file(
     code_file_to_check: str,
-    pyright_executable_in_venv: str,
+    pyright_command: list[str],
     project_dir: str,
     target_python: str | None = None,
 ) -> dict:
     """Runs Pyright (via its `--outputjson` mode) on a specified file.
+
+    `pyright_command` invokes this server's own pinned Pyright (see
+    pyproject.toml), not one installed into the disposable venv being
+    checked - Pyright resolves that venv's packages via `--pythonpath`/
+    `venvPath` config instead, so it never needs to live inside it.
 
     Success/failure and per-diagnostic messages come straight from Pyright's
     own structured output, not from parsing its human-readable text - that
@@ -211,7 +217,7 @@ def _run_pyright_on_file(
     file_placeholder = "[checked_code.py]"
 
     try:
-        command = [pyright_executable_in_venv, "-p", project_dir, "--outputjson"]
+        command = list(pyright_command) + ["-p", project_dir, "--outputjson"]
         if target_python is not None:
             command.extend(["--pythonpath", target_python])
         command.append(code_file_to_check)
@@ -253,10 +259,10 @@ def _run_pyright_on_file(
 
     except FileNotFoundError:
         check_result["output"] = (
-            f"Error: Pyright executable '{pyright_executable_in_venv}' not found."
+            f"Error: Pyright command {pyright_command!r} not found."
         )
         check_result["errors"].append(
-            f"Pyright executable '{pyright_executable_in_venv}' not found."
+            f"Pyright command {pyright_command!r} not found."
         )
         check_result["success"] = False
     except Exception as e:
@@ -364,39 +370,41 @@ def run_code_in_temporary_venv(
 
             pip_exe = _venv_executable(venv_dir, "pip")
 
-            # 2. Install dependencies and Pyright
-            # Pyright CLI is available via pip as 'pyright'
-            packages_to_install = dependencies + ["pyright"]
-            if not packages_to_install:  # Ensure there's at least 'pyright'
-                packages_to_install = ["pyright"]
-            elif "pyright" not in packages_to_install:
-                packages_to_install.append("pyright")
+            # 2. Install dependencies. Pyright itself runs from this server's
+            # own pinned install (see pyproject.toml), not from this
+            # disposable venv - see _run_pyright_on_file.
+            packages_to_install = list(dependencies)
 
-            try:
-                install_command = [pip_exe, "install"] + packages_to_install
-                results["log"].append(f"Installing packages: {' '.join(install_command)}")
-                install_proc = subprocess.run(
-                    install_command,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                )
+            if not packages_to_install:
                 results["dependencies_installed"] = True
-                results["log"].append(
-                    f"Packages installed successfully:\n{install_proc.stdout}"
-                )
+                results["log"].append("No extra dependencies to install.")
                 marker_path.write_text(json.dumps({"created_at": time.time()}))
-            except subprocess.CalledProcessError as e:
-                results["log"].append(
-                    f"Package installation failed for {pip_exe} install {' '.join(packages_to_install)}:\n{e.stderr}\nStdout was:\n{e.stdout}"
-                )
-                shutil.rmtree(venv_dir, ignore_errors=True)
-                return results  # Critical failure
+            else:
+                try:
+                    install_command = [pip_exe, "install"] + packages_to_install
+                    results["log"].append(f"Installing packages: {' '.join(install_command)}")
+                    install_proc = subprocess.run(
+                        install_command,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                    )
+                    results["dependencies_installed"] = True
+                    results["log"].append(
+                        f"Packages installed successfully:\n{install_proc.stdout}"
+                    )
+                    marker_path.write_text(json.dumps({"created_at": time.time()}))
+                except subprocess.CalledProcessError as e:
+                    results["log"].append(
+                        f"Package installation failed for {pip_exe} install {' '.join(packages_to_install)}:\n{e.stderr}\nStdout was:\n{e.stdout}"
+                    )
+                    shutil.rmtree(venv_dir, ignore_errors=True)
+                    return results  # Critical failure
 
         # Venv usage (pyright + optional execution) stays inside the lock so a
         # concurrent call can't rebuild/rmtree this venv while it's in use.
-        pyright_exe = _venv_executable(venv_dir, "pyright")
+        pyright_command = [sys.executable, "-m", "pyright"]
 
         # 3. Write AI code and its Pyright project config to a unique directory
         # outside the shared cached venv.
@@ -418,7 +426,7 @@ def run_code_in_temporary_venv(
             # 4. Perform Pyright static check
             pyright_result = _run_pyright_on_file(
                 str(ai_code_path),
-                pyright_exe,
+                pyright_command,
                 str(check_dir),
                 target_python=str(target_python),
             )

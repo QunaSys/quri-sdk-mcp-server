@@ -35,7 +35,7 @@ def test_zero_errors_marks_success():
         "summary": {"errorCount": 0, "warningCount": 0, "informationCount": 0},
     }
     with patch("subprocess.run", return_value=_fake_process(data)):
-        result = _run_pyright_on_file("/tmp/code.py", "/venv/bin/pyright", "/venv")
+        result = _run_pyright_on_file("/tmp/code.py", ["/venv/bin/pyright"], "/venv")
     assert result["success"] is True
     assert result["errors"] == []
 
@@ -48,7 +48,7 @@ def test_error_diagnostic_marks_failure_and_extracts_message():
         "summary": {"errorCount": 1, "warningCount": 0, "informationCount": 0},
     }
     with patch("subprocess.run", return_value=_fake_process(data)):
-        result = _run_pyright_on_file("/tmp/code.py", "/venv/bin/pyright", "/venv")
+        result = _run_pyright_on_file("/tmp/code.py", ["/venv/bin/pyright"], "/venv")
     assert result["success"] is False
     assert result["errors"] == ['"foo" is not defined']
 
@@ -60,7 +60,7 @@ def test_warnings_alone_still_mark_success():
         "summary": {"errorCount": 0, "warningCount": 1, "informationCount": 0},
     }
     with patch("subprocess.run", return_value=_fake_process(data)):
-        result = _run_pyright_on_file("/tmp/code.py", "/venv/bin/pyright", "/venv")
+        result = _run_pyright_on_file("/tmp/code.py", ["/venv/bin/pyright"], "/venv")
     assert result["success"] is True
     assert result["errors"] == []
 
@@ -71,7 +71,7 @@ def test_file_path_replaced_with_placeholder_in_output():
         "summary": {"errorCount": 1, "warningCount": 0, "informationCount": 0},
     }
     with patch("subprocess.run", return_value=_fake_process(data)):
-        result = _run_pyright_on_file("/tmp/code.py", "/venv/bin/pyright", "/venv")
+        result = _run_pyright_on_file("/tmp/code.py", ["/venv/bin/pyright"], "/venv")
     assert "/tmp/code.py" not in result["output"]
     assert "[checked_code.py]" in result["output"]
     assert "(someRule)" in result["output"]
@@ -79,7 +79,7 @@ def test_file_path_replaced_with_placeholder_in_output():
 
 def test_missing_pyright_executable_reported_as_failure():
     with patch("subprocess.run", side_effect=FileNotFoundError()):
-        result = _run_pyright_on_file("/tmp/code.py", "/venv/bin/pyright", "/venv")
+        result = _run_pyright_on_file("/tmp/code.py", ["/venv/bin/pyright"], "/venv")
     assert result["success"] is False
     assert "not found" in result["errors"][0].lower()
 
@@ -87,7 +87,7 @@ def test_missing_pyright_executable_reported_as_failure():
 def test_unparseable_output_reported_as_failure():
     process = MagicMock(stdout="not json", stderr="", returncode=1)
     with patch("subprocess.run", return_value=process):
-        result = _run_pyright_on_file("/tmp/code.py", "/venv/bin/pyright", "/venv")
+        result = _run_pyright_on_file("/tmp/code.py", ["/venv/bin/pyright"], "/venv")
     assert result["success"] is False
     assert result["errors"]
 
@@ -100,7 +100,7 @@ def test_target_python_is_passed_to_pyright():
     with patch("subprocess.run", return_value=_fake_process(data)) as run:
         result = _run_pyright_on_file(
             "/tmp/code.py",
-            "/venv/bin/pyright",
+            ["/venv/bin/pyright"],
             "/project",
             target_python="/target/bin/python",
         )

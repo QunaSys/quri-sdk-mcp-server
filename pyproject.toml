@@ -1,21 +1,47 @@
 [project]
 name = "mcp-server"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "MCP server for QURI SDK code-generation assistance: API introspection, documentation search, and code validation"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "docformatter>=1.7.7",
     "lxml>=6.0.2",
     "markdownify>=1.2.0",
-    "mcp[cli]>=1.14.1",
+    "mcp[cli]>=1.14.1,<2",
+    "pyright>=1.1.406,<1.2",
+    "quri-parts>=0.26.4",
+    "quri-sdk>=0.26.4",
 ]
+
+[project.scripts]
+quri-sdk-mcp = "quri_sdk_mcp.server:main"
 
 [dependency-groups]
 dev = [
     "black>=25.9.0",
     "flake8>=7.3.0",
     "mypy>=1.18.2",
+    "pytest>=8.4.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["quri_sdk_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/.flake8",
+    "/README.md",
+    "/examples",
+    "/pyproject.toml",
+    "/quri_sdk_mcp",
+    "/scripts/generate_plus_mapping.py",
+    "/tests",
+    "/uv.lock",
 ]
 
 [tool.docformatter]
