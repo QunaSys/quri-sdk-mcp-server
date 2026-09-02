@@ -22,6 +22,8 @@ _T = TypeVar("_T")
 
 TRACKED_PACKAGES = ("quri-sdk", "quri-parts", "quri-algo", "quri-vm")
 
+_SUBPROCESS_TIMEOUT_SECONDS = 30
+
 
 def resolve_target_python() -> Path:
     """Resolves the Python interpreter to introspect.
@@ -50,13 +52,23 @@ print(json.dumps(out))
 
 
 def _run_in_python(python: Path, script: str) -> str:
-    """Runs `script` via `python -c` and returns its stdout."""
-    result = subprocess.run(
-        [str(python), "-c", script],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    """Runs `script` via `python -c` and returns its stdout.
+
+    Raises:
+        OSError: on a hung target interpreter (startup hooks, slow-mounted
+            venvs), converted from `subprocess.TimeoutExpired` so it's caught
+            by the same `except OSError` every caller already uses.
+    """
+    try:
+        result = subprocess.run(
+            [str(python), "-c", script],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise OSError(f"Timed out running {python}: {e}") from e
     return result.stdout
 
 
