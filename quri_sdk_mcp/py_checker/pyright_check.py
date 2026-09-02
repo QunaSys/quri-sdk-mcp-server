@@ -48,15 +48,17 @@ def _prune_stale_venvs(cache_root: Path) -> None:
         if venv_dir.name.endswith(".lock"):
             continue
         marker = venv_dir / ".ready"
-        if not (marker.exists() and marker.stat().st_mtime < cutoff):
-            continue
         # Hold the same lock _venv_lock uses before deleting, so a caller that
-        # acquires it right after can't have its venv pulled out from under it.
+        # acquires it right after can't have its venv pulled out from under
+        # it. The staleness check itself races another prune/rebuild's
+        # rmtree of this same dir, so it stays inside the same try/except.
         try:
+            if not (marker.exists() and marker.stat().st_mtime < cutoff):
+                continue
             with _try_venv_lock(cache_root, venv_dir.name):
                 shutil.rmtree(venv_dir, ignore_errors=True)
         except OSError:
-            continue  # another call currently holds the lock; skip this round
+            continue  # lock held, or another call already deleted this dir
 
 
 def _venv_executable(venv_dir: Path, name: str) -> str:
