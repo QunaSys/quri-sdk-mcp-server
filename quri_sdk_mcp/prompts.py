@@ -21,9 +21,10 @@ When you are asked to perform these actions, you may skip them if the relevant i
 The following are recommended workflows for handling user requests using the above tools.
 
 ## User requests a tutorial on a certain topic
-1. Do preparation action a. and b.
-2. Find the url of the most relevant tutorial, and if there is none look for example code
-3. Use the fetch_as_markdown tool to retrieve it and return the contents to the user
+1. Use the get_example tool with the requested topic as the query
+2. If it finds no good match, instead do preparation action a. and b. and browse the table of contents for the most relevant tutorial or example
+3. If you need the exact runnable code (not just the searched text), use the fetch_example_source tool with the match's path and, when present, its working_directory
+4. Return the contents to the user
 
 ## User asks you to explain how a certain feature works
 1. Do preparation action a. and  b. and find a relevant example using the feature requested

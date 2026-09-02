@@ -6,7 +6,11 @@ from quri_sdk_mcp.fetch_tools import tool_from_resource
 from quri_sdk_mcp.markdown_resources import all_markdown_resources
 from quri_sdk_mcp.python_source_code_resources import all_python_source_code_resources
 from quri_sdk_mcp.text_resources import all_text_resources
-from quri_sdk_mcp.fetch import Fetcher, FetchRequestArgs, FetchResponse
+from quri_sdk_mcp.corpus import (
+    fetch_example_source as fetch_example_source_corpus,
+    search as search_docs_corpus,
+)
+from quri_sdk_mcp.fetch import FetchResponse
 from quri_sdk_mcp.introspection import lookup_symbol
 from quri_sdk_mcp.py_checker import run_code_in_temporary_venv, timeout_result
 from typing import Optional, Any
@@ -46,48 +50,30 @@ def get_mcp_server() -> FastMCP:
 
     # Utils ----------------------
     @mcp.tool()
-    async def fetch_as_markdown(
-        url: str, headers: Optional[dict[str, str]] = None
+    async def fetch_example_source(
+        path: str, working_directory: Optional[str] = None
     ) -> FetchResponse:
-        """Fetch a website, convert its HTML content to Markdown, and return it. This
-        tool should be used to fetch tutorials and example codes from the quri-sdk
-        documentation site. Use this when the user requests to see a tutorial or example
-        code, or use it when you need to learn how to do something using one of the
-        tutorials or examples.
+        """Fetches the exact runnable source behind a `search_docs`/
+        `get_example` result. Use this once `get_example` has found the
+        right tutorial or how-to and you need the precise, cell-accurate
+        code to run or adapt - the rendered/searched text loses things like
+        exact cell boundaries and image outputs that the raw notebook keeps.
 
         Args:
-            url (str): URL of the website to fetch.
-            headers (Optional[dict[str, str]]): Custom headers for the request.
+            path (str): The `path` field from a `search_docs`/`get_example`
+                match, e.g. "docs/tutorials/quri-parts/circuits".
+            working_directory (Optional[str]): The `working_directory` field
+                returned with a local search result. Omit for remote results.
 
         Returns:
-            FetchResponse: An object containing the Markdown content or an error message.
-                        On success, isError is false and content contains the Markdown text.
-                        On failure, isError is true and errorMessage contains the error details.
+            FetchResponse: the raw notebook (`.ipynb` JSON), Markdown, or RST
+                source, or an error if none exists at that path.
         """
-        args = FetchRequestArgs(url=url, headers=headers)
-        return await Fetcher.markdown(args)
-
-    @mcp.tool()
-    async def fetch_raw_python_notebook(
-        url: str, headers: Optional[dict[str, str]] = None
-    ) -> FetchResponse:
-        """This function should be used to fetch files directly from the quri- sdk
-        repository. Use this to fetch python notebooks when needed. If you are unsure
-        what to fetch, try first fetching the repository file-tree using one of the
-        other tools.
-
-        Args:
-            url (str): URL of the website to fetch.
-            headers (Optional[dict[str, str]]): Custom headers for the request.
-
-        Returns:
-            FetchResponse: An object containing the requested content or an error message.
-                        On success, isError is false and content contains the Markdown text.
-                        On failure, isError is true and errorMessage contains the error details.
-        """
-
-        args = FetchRequestArgs(url=url, headers=headers)
-        return await Fetcher.json(args)
+        try:
+            text = await fetch_example_source_corpus(path, working_directory)
+            return FetchResponse(content=[{"type": "text", "text": text}], isError=False)
+        except (ConnectionError, ValueError) as e:
+            return FetchResponse(content=[], isError=True, errorMessage=str(e))
 
     @mcp.tool()
     async def check_code(
@@ -150,6 +136,76 @@ def get_mcp_server() -> FastMCP:
                 location, source text, and (if known) a plus_equivalents list.
         """
         return await asyncio.to_thread(lookup_symbol, symbol)
+
+    @mcp.tool()
+    async def search_docs(
+        query: str,
+        categories: Optional[list[str]] = None,
+        limit: int = 10,
+        working_directory: Optional[str] = None,
+    ) -> list[dict[str, str]]:
+        """Searches QURI SDK documentation (tutorials, how-to guides,
+        reference pages, and release notes) via lexical keyword search. This
+        should be the first stop for finding relevant documentation - it
+        searches the actual doc corpus instead of guessing a URL to fetch.
+
+        Args:
+            query (str): Free-text search terms, e.g. "qulacs sampler" or
+                "parametric circuit gradient".
+            categories (Optional[list[str]]): Restrict results to these
+                categories: "tutorial", "how-to", "reference", "changelog",
+                "concept". Omit to search all categories.
+            limit (int): Max number of results.
+            working_directory (Optional[str]): Absolute path to a local
+                docs checkout (e.g. a quri-sdk or quri-sdk-enterprise
+                checkout with a `docs/` directory) to search instead of the
+                cached live-site corpus. Pass this if the current project
+                root itself looks like such a checkout (a `docs/` directory
+                next to a pyproject.toml naming
+                quri-parts/quri-algo/quri-vm/quri-sdk-enterprise), so
+                results match the exact branch being worked on instead of
+                the deployed site. Local results include this path in their
+                `working_directory` field for `fetch_example_source`. Usually
+                not needed - this is
+                auto-detected from the target interpreter's editable-install
+                metadata when possible, searching both quri-parts and
+                quri-sdk-enterprise checkouts together if both are found.
+
+        Returns:
+            list[dict]: Matches as {path, category, title, snippet}, best
+                match first. Local matches also include working_directory.
+        """
+        return await search_docs_corpus(
+            query, categories=categories, limit=limit, working_directory=working_directory
+        )
+
+    @mcp.tool()
+    async def get_example(
+        query: str,
+        limit: int = 5,
+        working_directory: Optional[str] = None,
+    ) -> list[dict[str, str]]:
+        """Finds a QURI SDK tutorial or how-to guide matching `query`. This
+        is the tool to reach for when the user asks to see an example or how
+        to do something - it's `search_docs` pre-restricted to tutorial and
+        how-to content.
+
+        Args:
+            query (str): Free-text search terms, e.g. "qulacs sampler" or
+                "parametric circuit gradient".
+            limit (int): Max number of results.
+            working_directory (Optional[str]): See `search_docs`.
+
+        Returns:
+            list[dict]: Matches as {path, category, title, snippet}, best
+                match first.
+        """
+        return await search_docs_corpus(
+            query,
+            categories=["tutorial", "how-to"],
+            limit=limit,
+            working_directory=working_directory,
+        )
 
     return mcp
 

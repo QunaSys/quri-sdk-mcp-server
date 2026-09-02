@@ -2,7 +2,6 @@ import httpx
 from markdownify import MarkdownConverter
 from collections import OrderedDict
 import importlib.metadata
-import json
 import os
 import time
 
@@ -110,29 +109,6 @@ class Fetcher:
 
             return FetchResponse(
                 content=[{"type": "text", "text": html_text}], isError=False
-            )
-        except Exception as e:
-            return FetchResponse(content=[], isError=True, errorMessage=str(e))
-
-    @staticmethod
-    async def json(payload: FetchRequestArgs) -> FetchResponse:
-        """Fetches content and parses it as JSON."""
-        try:
-            response = await Fetcher._fetch(payload)
-            # httpx's response.json() handles decoding
-            json_content = (
-                response.json()
-            )  # Note: httpx automatically handles async here if needed
-            # JSONを整形して文字列化
-            json_string = json.dumps(json_content, indent=2, ensure_ascii=False)
-            return FetchResponse(
-                content=[{"type": "text", "text": json_string}], isError=False
-            )
-        except json.JSONDecodeError as e:
-            return FetchResponse(
-                content=[],
-                isError=True,
-                errorMessage=f"Failed to decode JSON from {payload.url}: {e}",
             )
         except Exception as e:
             return FetchResponse(content=[], isError=True, errorMessage=str(e))
