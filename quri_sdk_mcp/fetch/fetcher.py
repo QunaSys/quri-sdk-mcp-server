@@ -1,7 +1,11 @@
 import httpx
 from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
+from collections import OrderedDict
+import importlib.metadata
 import json
+import os
+import time
 
 from quri_sdk_mcp.fetch.types import FetchRequestArgs, FetchResponse
 
@@ -14,11 +18,29 @@ class NoImagesConverter(MarkdownConverter):
         return ""
 
 
+try:
+    _PACKAGE_VERSION = importlib.metadata.version("mcp-server")
+except importlib.metadata.PackageNotFoundError:
+    _PACKAGE_VERSION = "0.0.0"
+
+GITHUB_API_HOST = "api.github.com"
+GITHUB_CACHE_TTL_SECONDS = 15 * 60
+GITHUB_CACHE_MAX_ENTRIES = 256
+_GitHubCacheKey = tuple[str, tuple[tuple[str, str], ...]]
+_github_api_cache: OrderedDict[_GitHubCacheKey, tuple[float, httpx.Response]] = (
+    OrderedDict()
+)
+
+
+def _is_github_cache_fresh(cached_at: float, now: float) -> bool:
+    return now - cached_at < GITHUB_CACHE_TTL_SECONDS
+
+
 class Fetcher:
     """Handles fetching and processing web content."""
 
     DEFAULT_HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Jij-MCP/0.1 (+https://github.com/Jij-Inc/Jij-MCP-Server)"
+        "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 quri-sdk-mcp-server/{_PACKAGE_VERSION} (+https://github.com/QunaSys/quri-sdk-mcp-server)"
     }
 
     @staticmethod
@@ -27,13 +49,35 @@ class Fetcher:
         headers = Fetcher.DEFAULT_HEADERS.copy()
         if payload.headers:
             headers.update(payload.headers)
+        headers = httpx.Headers(headers)
+
+        url = str(payload.url)
+        is_github_api = payload.url.host == GITHUB_API_HOST
+
+        if is_github_api:
+            token = os.environ.get("GITHUB_TOKEN")
+            if token and "authorization" not in headers:
+                headers["Authorization"] = f"Bearer {token}"
+
+            cache_key: _GitHubCacheKey = (url, tuple(sorted(headers.items())))
+            cached = _github_api_cache.get(cache_key)
+            if cached is not None:
+                cached_at, cached_response = cached
+                if _is_github_cache_fresh(cached_at, time.monotonic()):
+                    _github_api_cache.move_to_end(cache_key)
+                    return cached_response
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
             try:
                 response = await client.get(
-                    str(payload.url), headers=headers
+                    url, headers=headers
                 )  # HttpUrlをstrに変換
                 response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
+                if is_github_api:
+                    _github_api_cache[cache_key] = (time.monotonic(), response)
+                    _github_api_cache.move_to_end(cache_key)
+                    while len(_github_api_cache) > GITHUB_CACHE_MAX_ENTRIES:
+                        _github_api_cache.popitem(last=False)
                 return response
             except httpx.HTTPStatusError as e:
                 raise ConnectionError(
