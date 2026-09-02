@@ -92,6 +92,31 @@ def test_unparseable_output_reported_as_failure():
     assert result["errors"]
 
 
+def test_target_python_is_passed_to_pyright():
+    data = {
+        "generalDiagnostics": [],
+        "summary": {"errorCount": 0, "warningCount": 0, "informationCount": 0},
+    }
+    with patch("subprocess.run", return_value=_fake_process(data)) as run:
+        result = _run_pyright_on_file(
+            "/tmp/code.py",
+            "/venv/bin/pyright",
+            "/project",
+            target_python="/target/bin/python",
+        )
+
+    assert result["success"] is True
+    assert run.call_args.args[0] == [
+        "/venv/bin/pyright",
+        "-p",
+        "/project",
+        "--outputjson",
+        "--pythonpath",
+        "/target/bin/python",
+        "/tmp/code.py",
+    ]
+
+
 if __name__ == "__main__":
     test_zero_errors_marks_success()
     test_error_diagnostic_marks_failure_and_extracts_message()
@@ -99,4 +124,5 @@ if __name__ == "__main__":
     test_file_path_replaced_with_placeholder_in_output()
     test_missing_pyright_executable_reported_as_failure()
     test_unparseable_output_reported_as_failure()
+    test_target_python_is_passed_to_pyright()
     print("ok")

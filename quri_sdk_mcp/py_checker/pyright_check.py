@@ -17,6 +17,8 @@ if sys.platform == "win32":
 else:
     import fcntl
 
+from quri_sdk_mcp.env_resolution import resolve_target_python
+
 VENV_PRUNE_TTL_DAYS = 30
 VENV_FRESHNESS_TTL_DAYS = 1
 VENV_CACHE_PRUNE_PROBABILITY = 1 / 20
@@ -137,39 +139,63 @@ def _is_venv_fresh(marker_path: Path) -> bool:
     return time.time() - data["created_at"] <= VENV_FRESHNESS_TTL_DAYS * 86400
 
 
-def create_pyrightconfig(venv_path: Path) -> dict:
+def _target_python_environment(python: Path) -> tuple[str, list[str]]:
+    """Returns the target interpreter's language version and import paths."""
+    script = (
+        "import json, sys\n"
+        "print(json.dumps({"
+        "'version': f'{sys.version_info.major}.{sys.version_info.minor}', "
+        "'import_paths': [p for p in sys.path if p]}))\n"
+    )
+    process = subprocess.run(
+        [str(python), "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    data = json.loads(process.stdout)
+    return data["version"], data["import_paths"]
+
+
+def create_pyrightconfig(
+    venv_path: Path,
+    project_dir: Path | None = None,
+    python_version: str | None = None,
+    extra_paths: list[str] | None = None,
+) -> dict:
     """
     Create a pyrightconfig.json file for the given virtual environment.
 
     Args:
         venv_path: Path to the virtual environment directory
+        project_dir: Directory containing the code being checked.
 
     Returns:
         The created pyrightconfig.json's contents.
     """
     config = {
-        "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
-        "venvPath": str(venv_path.parent),
+        "pythonVersion": python_version
+        or f"{sys.version_info.major}.{sys.version_info.minor}",
+        "venvPath": str(venv_path.parent.absolute()),
         "venv": venv_path.name,
         "typeCheckingMode": "basic",
         "useLibraryCodeForTypes": True,
         "reportMissingImports": True,
         "reportMissingTypeStubs": False,
-        "executionEnvironments": [
-            {
-                "root": "."
-            }
-        ]
+        "executionEnvironments": [{"root": ".", "extraPaths": extra_paths or []}],
     }
 
-    config_path = venv_path / "pyrightconfig.json"
+    config_path = (project_dir or venv_path) / "pyrightconfig.json"
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
 
     return config
 
 def _run_pyright_on_file(
-    code_file_to_check: str, pyright_executable_in_venv: str, project_dir: str
+    code_file_to_check: str,
+    pyright_executable_in_venv: str,
+    project_dir: str,
+    target_python: str | None = None,
 ) -> dict:
     """Runs Pyright (via its `--outputjson` mode) on a specified file.
 
@@ -185,8 +211,12 @@ def _run_pyright_on_file(
     file_placeholder = "[checked_code.py]"
 
     try:
+        command = [pyright_executable_in_venv, "-p", project_dir, "--outputjson"]
+        if target_python is not None:
+            command.extend(["--pythonpath", target_python])
+        command.append(code_file_to_check)
         process = subprocess.run(
-            [pyright_executable_in_venv, "-p", project_dir, "--outputjson", code_file_to_check],
+            command,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -243,6 +273,7 @@ def _empty_result() -> dict[str, Any]:
     also used for a timeout result raised before any step could run."""
     return {
         "venv_path": None,
+        "target_python": None,
         "venv_created": False,
         "dependencies_installed": False,
         "pyright_check_result": None,
@@ -284,11 +315,23 @@ def run_code_in_temporary_venv(
     """
     results = _empty_result()
 
+    target_python = resolve_target_python()
+    results["target_python"] = str(target_python)
+    try:
+        python_version_tag, target_import_paths = _target_python_environment(
+            target_python
+        )
+    except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as e:
+        results["log"].append(
+            f"Failed to inspect target Python environment {target_python}: {e}"
+        )
+        return results
+
     cache_root = _venv_cache_root()
     _prune_stale_venvs(cache_root)
 
-    python_version_tag = f"{sys.version_info.major}.{sys.version_info.minor}"
-    cache_key = _venv_cache_key(dependencies, python_version_tag)
+    target_tag = f"{python_version_tag}@{target_python.absolute()}"
+    cache_key = _venv_cache_key(dependencies, target_tag)
     venv_dir = cache_root / cache_key
     marker_path = venv_dir / ".ready"
     results["venv_path"] = str(venv_dir)
@@ -304,13 +347,9 @@ def run_code_in_temporary_venv(
                 shutil.rmtree(venv_dir, ignore_errors=True)
 
             # 1. Create the virtual environment
-            # ponytail: always the server's own interpreter, not resolve_target_python().
-            # Dependencies are freshly pip-installed either way, so only the venv's
-            # Python *language* version would change; not worth an extra subprocess
-            # call in the cache-key computation for that.
             try:
                 subprocess.run(
-                    [sys.executable, "-m", "venv", str(venv_dir)],
+                    [str(target_python), "-m", "venv", str(venv_dir)],
                     check=True,
                     capture_output=True,
                     text=True,
@@ -343,13 +382,9 @@ def run_code_in_temporary_venv(
                     text=True,
                     encoding="utf-8",
                 )
-                pyright_config = create_pyrightconfig(venv_dir)
                 results["dependencies_installed"] = True
                 results["log"].append(
                     f"Packages installed successfully:\n{install_proc.stdout}"
-                )
-                results["log"].append(
-                    f"Pyright configured as {json.dumps(pyright_config, indent=2)}"
                 )
                 marker_path.write_text(json.dumps({"created_at": time.time()}))
             except subprocess.CalledProcessError as e:
@@ -363,17 +398,29 @@ def run_code_in_temporary_venv(
         # concurrent call can't rebuild/rmtree this venv while it's in use.
         pyright_exe = _venv_executable(venv_dir, "pyright")
 
-        # 3. Write AI code to a file in the system temp dir (not the shared, cached
-        # venv dir, so concurrent calls reusing the same venv don't collide).
-        fd, ai_code_path = tempfile.mkstemp(prefix="ai_code_", suffix=".py")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(ai_code_string)
+        # 3. Write AI code and its Pyright project config to a unique directory
+        # outside the shared cached venv.
+        with tempfile.TemporaryDirectory(prefix="ai_code_check_") as check_dir_name:
+            check_dir = Path(check_dir_name)
+            ai_code_path = check_dir / "checked_code.py"
+            ai_code_path.write_text(ai_code_string, encoding="utf-8")
+            pyright_config = create_pyrightconfig(
+                venv_dir,
+                project_dir=check_dir,
+                python_version=python_version_tag,
+                extra_paths=target_import_paths,
+            )
+            results["log"].append(
+                f"Pyright configured as {json.dumps(pyright_config, indent=2)}"
+            )
             results["log"].append(f"AI code written to: {ai_code_path}")
 
             # 4. Perform Pyright static check
             pyright_result = _run_pyright_on_file(
-                ai_code_path, pyright_exe, str(venv_dir)
+                str(ai_code_path),
+                pyright_exe,
+                str(check_dir),
+                target_python=str(target_python),
             )
             results["pyright_check_result"] = pyright_result
             results["log"].append(
@@ -421,6 +468,13 @@ def run_code_in_temporary_venv(
                                 text=True,
                                 encoding="utf-8",
                                 timeout=30,  # Added timeout
+                                env={
+                                    **os.environ,
+                                    "PYTHONPATH": os.pathsep.join(
+                                        target_import_paths
+                                        + ([os.environ["PYTHONPATH"]] if "PYTHONPATH" in os.environ else [])
+                                    ),
+                                },
                             )
                         results["code_execution_result"]["success"] = (
                             exec_proc.returncode == 0
@@ -445,10 +499,6 @@ def run_code_in_temporary_venv(
                         )
                         results["code_execution_result"]["success"] = False
                         results["code_execution_result"]["stderr"] = str(e)
-        finally:
-            # Clean up the temporary AI code file
-            if os.path.exists(ai_code_path):
-                os.remove(ai_code_path)
-                results["log"].append(f"Cleaned up AI code file: {ai_code_path}")
+            results["log"].append(f"Cleaned up AI code directory: {check_dir}")
 
     return results

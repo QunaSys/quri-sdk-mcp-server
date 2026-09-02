@@ -1,0 +1,72 @@
+[
+  {
+    "oss_symbol": "quri_parts.qulacs.sampler.create_qulacs_vector_sampler",
+    "plus_symbol": "quri_parts.plus.qulacs.mpi.MPI_BACKEND",
+    "plus_namespace": "quri_parts.plus",
+    "usage_pattern": "Pass as the `backend=` kwarg: `create_qulacs_vector_sampler(seed, backend=MPI_BACKEND)`. Requires a power-of-two MPI process count and at least log2(size)+2 qubits; density-matrix, noise-simulator, and marginal-probability paths raise RuntimeError.",
+    "benefit": "Distributes the state vector across MPI ranks so each process only holds its local slice, enabling larger qubit counts than fit in one process's memory."
+  },
+  {
+    "oss_symbol": "quri_parts.qulacs.sampler.create_qulacs_vector_sampler",
+    "plus_symbol": "quri_parts.plus.cuquantum.custatevec.sampler.create_cuquantum_vector_sampler",
+    "plus_namespace": "quri_parts.plus",
+    "usage_pattern": "Standalone alternative factory (not a `backend=` kwarg) - call directly in place of `create_qulacs_vector_sampler`. Concurrent and multi-node variants also exist: `create_cuquantum_vector_concurrent_sampler`, `create_cuquantum_mnode_vector_sampler`.",
+    "benefit": "GPU-accelerated statevector simulation via NVIDIA cuStateVec. `n_global_qubits > 0` enables multi-GPU simulation across 2**n_global_qubits GPUs."
+  },
+  {
+    "oss_symbol": "quri_parts.tensornetwork.estimator.create_tensornetwork_estimator",
+    "plus_symbol": "quri_parts.plus.tensornetwork.estimator.create_tensornetwork_mps_estimator",
+    "plus_namespace": "quri_parts.plus",
+    "usage_pattern": "Standalone alternative factory - import replaces the OSS import, call directly with `backend=`, `contraction_strategy=`, and `max_bond_dimension=`/`max_truncation_err=`.",
+    "benefit": "Contracts via time-evolving block decimation (TEBD) to keep the bond dimension bounded, trading exactness for scaling to more qubits than exact tensor-network contraction."
+  },
+  {
+    "oss_symbol": null,
+    "plus_symbol": "quri_parts.plus.tensornetwork.estimator.create_tensornetwork_mps_noisy_estimator",
+    "plus_namespace": "quri_parts.plus",
+    "usage_pattern": "Call directly; no OSS equivalent exists.",
+    "benefit": "Efficiently simulates noisy quantum circuits using MPS and Pauli Transfer Matrix (PTM) representations."
+  },
+  {
+    "oss_symbol": "quri_parts.openfermion.mol.get_qubit_mapped_hamiltonian",
+    "plus_symbol": "quri_parts.plus.openfermion.mol.get_qubit_mapped_periodic_hamiltonian",
+    "plus_namespace": "quri_parts.plus",
+    "usage_pattern": "Standalone alternative factory for periodic (k-point) active spaces - import replaces the OSS import; internally delegates to the OSS function after summing active-space electrons/orbitals across k-points.",
+    "benefit": "Extends the molecular Hamiltonian mapper to periodic/crystalline (k-point) active spaces, which the OSS function alone doesn't model."
+  },
+  {
+    "oss_symbol": "quri_parts.core.estimator.hessian.create_parameter_shift_hessian_estimator",
+    "plus_symbol": "quri_parts.plus.chem.properties.create_energy_hessian_estimator",
+    "plus_namespace": "quri_parts.plus",
+    "usage_pattern": "Call directly; composes the OSS `create_parameter_shift_gradient_estimator` and `create_parameter_shift_hessian_estimator` factories into one higher-level analytic energy-hessian estimator.",
+    "benefit": "Implements the analytic energy-derivative formulae of Mitarai et al. (2020, Phys. Rev. Research 2, 013129), avoiding costly finite-difference Hessians."
+  },
+  {
+    "oss_symbol": null,
+    "plus_symbol": "quri_parts.plus.algo.eigensolver.qsci.qsci",
+    "plus_namespace": "quri_parts.plus",
+    "usage_pattern": "Call directly: `qsci(hamiltonian, approx_states, sampler, total_shots, backend=QSCI_GPU_BACKEND)`. `backend=` swaps between `QSCI_CPU_BACKEND` (default) and `quri_parts.plus.algo.eigensolver.qsci_gpu.QSCI_GPU_BACKEND`.",
+    "benefit": "GPU backend accelerates truncated-Hamiltonian construction for larger active spaces. No OSS QSCI implementation exists."
+  },
+  {
+    "oss_symbol": null,
+    "plus_symbol": "quri_algo.plus.circuit_lib",
+    "plus_namespace": "quri_algo.plus",
+    "usage_pattern": "Import the relevant submodule directly, e.g. `from quri_algo.plus.circuit_lib.lcu import SELECT, LCU, QROM`. This is the current, maintained home for qsub-based FTQC circuit building blocks - `quri_parts.plus.qsub.lib.*` is deprecated (emits FutureWarning) in favor of this.",
+    "benefit": "Fault-tolerant/qsub-level circuit-construction building blocks (SELECT/PREPARE/QROM, adders, amplitude-amplification, reflections) with no OSS counterpart."
+  },
+  {
+    "oss_symbol": "quri_vm.vm.VM",
+    "plus_symbol": "quri_vm.plus.vm_backend.BraketDeviceBackend",
+    "plus_namespace": "quri_vm.plus",
+    "usage_pattern": "Pass as the `vm_backend=` kwarg: `VM(vm_backend=BraketDeviceBackend(aws_device))`. Constructor also takes `simulate=True` for a noisy-simulation mode using the real device's noise model and native gate transpiler.",
+    "benefit": "Runs VM.sample/.analyze/.transpile against a real AWS Braket cloud device instead of an idealized logical-circuit simulator; wraps `generate_device_property` and the OSS `quri_parts.braket` sampling backend."
+  },
+  {
+    "oss_symbol": "quri_vm.vm.VM",
+    "plus_symbol": "quri_vm.plus.vm_backend.QiskitDeviceBackend",
+    "plus_namespace": "quri_vm.plus",
+    "usage_pattern": "Pass as the `vm_backend=` kwarg: `VM(vm_backend=QiskitDeviceBackend(ibm_backend))`. Constructor also takes `simulate=True` for a noisy-simulation mode using the real device's noise model and native gate transpiler.",
+    "benefit": "Runs VM.sample/.analyze/.transpile against a real IBM Quantum backend instead of an idealized logical-circuit simulator; wraps `generate_device_property` and the OSS `quri_parts.qiskit` sampling backend."
+  }
+]
